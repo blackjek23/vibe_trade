@@ -1,0 +1,42 @@
+test_file,test_type,test_name,test_objective
+test_config.py,TestGeneralConfig,test_defaults,Verify default values: mode=paper log_level=INFO db_path=data/vibe_trade.db
+test_config.py,TestGeneralConfig,test_mode_must_be_paper_or_live,Reject invalid mode like 'test' — only 'paper' and 'live' allowed
+test_config.py,TestGeneralConfig,test_log_level_validated,Log level gets uppercased automatically (debug -> DEBUG)
+test_config.py,TestGeneralConfig,test_log_level_rejects_invalid,Reject nonsense log levels like 'BANANA'
+test_config.py,TestBrokerConfig,test_defaults,Verify default ports: paper=7497 live=7496
+test_config.py,TestBrokerConfig,test_get_port_paper,get_port('paper') returns 7497
+test_config.py,TestBrokerConfig,test_get_port_live,get_port('live') returns 7496
+test_config.py,TestBrokerConfig,test_timeout_bounds,Reject timeout outside 1-300 range
+test_config.py,TestBrokerConfig,test_client_id_non_negative,Reject negative client_id
+test_config.py,TestUniverseConfig,test_default_sp500,Default source is 'sp500'
+test_config.py,TestUniverseConfig,test_custom_symbols_uppercased,Custom symbols get uppercased and trimmed ('aapl' -> 'AAPL')
+test_config.py,TestUniverseConfig,test_empty_strings_stripped,Empty strings and whitespace-only entries removed from symbol list
+test_config.py,TestSchedulerConfig,test_defaults,Verify defaults: interval=60min market_open=09:30
+test_config.py,TestSchedulerConfig,test_interval_bounds,Reject interval outside 1-1440 range
+test_config.py,TestSchedulerConfig,test_valid_time_format,Accept valid HH:MM time strings
+test_config.py,TestSchedulerConfig,test_invalid_time_format,Reject time formats that aren't HH:MM (like 9:30:00)
+test_config.py,TestSchedulerConfig,test_invalid_time_values,Reject impossible times like 25:00
+test_config.py,TestSchedulerConfig,test_trading_days_validated,Trading days get lowercased (MON -> mon)
+test_config.py,TestSchedulerConfig,test_invalid_trading_day,Reject invalid day names like 'monday' — must be 3-letter abbreviation
+test_config.py,TestTrailingStopConfig,test_defaults,Verify defaults: method=atr atr_multiplier=1.5
+test_config.py,TestTrailingStopConfig,test_multiplier_must_be_positive,Reject zero or negative ATR multiplier
+test_config.py,TestTrailingStopConfig,test_percentage_bounds,Reject percentage outside 1-50 range
+test_config.py,TestRiskConfig,test_defaults,Verify defaults: max_risk=1.0% max_positions=5
+test_config.py,TestRiskConfig,test_rejects_negative_risk,Reject negative risk percentage
+test_config.py,TestRiskConfig,test_rejects_zero_positions,Reject zero max_open_positions
+test_config.py,TestRiskConfig,test_exposure_bounds,Reject portfolio exposure above 100%
+test_config.py,TestMACrossoverConfig,test_defaults,Verify defaults: fast_period=20 slow_period=50
+test_config.py,TestMACrossoverConfig,test_slow_must_be_greater_than_fast,Reject slow_period <= fast_period (e.g. fast=50 slow=20)
+test_config.py,TestMACrossoverConfig,test_equal_periods_rejected,Reject equal fast and slow periods
+test_config.py,TestMACrossoverConfig,test_period_bounds,Reject fast_period below minimum (< 2)
+test_config.py,TestRSIMeanRevertConfig,test_defaults,Verify defaults: oversold=30 overbought=70
+test_config.py,TestRSIMeanRevertConfig,test_swapped_values_rejected,Reject swapped thresholds (oversold=70 overbought=30)
+test_config.py,TestRSIMeanRevertConfig,test_oversold_bounds,Reject oversold outside 1-49 range
+test_config.py,TestRSIMeanRevertConfig,test_overbought_bounds,Reject overbought outside 51-99 range
+test_config.py,TestStrategyConfig,test_defaults,Verify defaults: active=['ma_crossover'] timeframe='1h'
+test_config.py,TestStrategyConfig,test_rejects_invalid_timeframe,Reject unsupported timeframes like '5m'
+test_config.py,TestStrategyConfig,test_rejects_empty_active,Reject empty active strategy list — at least one required
+test_config.py,TestStrategyConfig,test_valid_timeframes,Accept all valid timeframes: 1h 4h 1d
+test_config.py,TestAppConfig,test_defaults,Verify all sub-configs wire up correctly with defaults
+test_config.py,TestAppConfig,test_load_config_no_file,load_config() returns defaults when config file doesn't exist
+test_config.py,TestAppConfig,test_load_config_from_example,load_config() correctly loads from the example TOML file
