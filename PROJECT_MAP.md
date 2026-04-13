@@ -603,9 +603,10 @@ flowchart TD
 | MISSING | - | - | No market holiday calendar |
 
 **Status:**
-- 41 config tests passing (`pytest tests/`)
+- 64 tests passing (`pytest tests/`) — 41 config + 23 database
 - Git repo initialized
 - Both strategies use `compute_indicators()` correctly (fixed from initial draft)
+- Full test registry at `tests/TEST_REGISTRY.csv`
 
 ---
 

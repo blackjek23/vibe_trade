@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,8 +28,11 @@ def db_session() -> Session:
 
 
 @pytest.fixture
-def sample_candles() -> pd.DataFrame:
+def sample_candles():
     """60 days of synthetic OHLCV data for testing strategies."""
+    import numpy as np
+    import pandas as pd
+
     np.random.seed(42)
     dates = pd.date_range("2024-01-01", periods=60, freq="D")
     close = 100 + np.cumsum(np.random.randn(60) * 0.5)
