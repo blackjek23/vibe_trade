@@ -9,8 +9,8 @@ build/
 venv/
 .env
 config/config.toml
-data/
-logs/
+/data/
+/logs/
 *.db
 .mypy_cache/
 .pytest_cache/

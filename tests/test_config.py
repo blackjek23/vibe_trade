@@ -81,6 +81,20 @@ class TestBrokerConfig:
         with pytest.raises(ValidationError):
             BrokerConfig(retry_backoff_seconds=61)
 
+    def test_order_pacing_defaults(self):
+        c = BrokerConfig()
+        assert c.order_pacing_seconds == 0.05
+
+    def test_order_pacing_allows_zero(self):
+        c = BrokerConfig(order_pacing_seconds=0)
+        assert c.order_pacing_seconds == 0
+
+    def test_order_pacing_rejects_negative_and_huge(self):
+        with pytest.raises(ValidationError):
+            BrokerConfig(order_pacing_seconds=-0.01)
+        with pytest.raises(ValidationError):
+            BrokerConfig(order_pacing_seconds=5.1)
+
 
 class TestUniverseConfig:
     def test_default_sp500(self):

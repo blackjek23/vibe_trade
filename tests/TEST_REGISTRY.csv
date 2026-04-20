@@ -11,6 +11,9 @@ test_config.py,TestBrokerConfig,test_client_id_non_negative,Reject negative clie
 test_config.py,TestBrokerConfig,test_connect_retries_defaults,Verify defaults: connect_retries=3 retry_backoff_seconds=2.0
 test_config.py,TestBrokerConfig,test_connect_retries_bounds,Reject connect_retries<0 or >10
 test_config.py,TestBrokerConfig,test_retry_backoff_must_be_positive,Reject retry_backoff_seconds<=0 or >60
+test_config.py,TestBrokerConfig,test_order_pacing_defaults,Verify default order_pacing_seconds=0.05 (~20 msg/sec)
+test_config.py,TestBrokerConfig,test_order_pacing_allows_zero,Accept order_pacing_seconds=0 (disables pacing)
+test_config.py,TestBrokerConfig,test_order_pacing_rejects_negative_and_huge,Reject negative or >5s pacing values
 test_config.py,TestUniverseConfig,test_default_sp500,Default source is 'sp500'
 test_config.py,TestUniverseConfig,test_custom_symbols_uppercased,Custom symbols get uppercased and trimmed ('aapl' -> 'AAPL')
 test_config.py,TestUniverseConfig,test_empty_strings_stripped,Empty strings and whitespace-only entries removed from symbol list
@@ -70,3 +73,13 @@ test_broker.py,TestIBBrokerConnectRetry,test_connect_succeeds_first_try,Happy pa
 test_broker.py,TestIBBrokerConnectRetry,test_connect_retries_then_succeeds,Fail twice then succeed — verify 3 total calls made
 test_broker.py,TestIBBrokerConnectRetry,test_connect_exhausts_retries_and_raises,All attempts fail — verify original exception propagates after max_attempts
 test_broker.py,TestIBBrokerConnectRetry,test_connect_no_retries_when_disabled,connect_retries=0 — verify exactly 1 attempt then raise
+test_broker.py,TestContractCaching,test_same_symbol_qualified_only_once,Place 3 orders for AAPL — verify qualifyContractsAsync called once
+test_broker.py,TestContractCaching,test_different_symbols_each_qualified_once,Orders for AAPL+MSFT (interleaved) — each qualified exactly once
+test_broker.py,TestContractCaching,test_disconnect_clears_cache,Disconnect empties _contract_cache to avoid stale state on reconnect
+test_universe.py,TestUniverseUniqueness,test_sp500_list_has_no_duplicates,SP500_SYMBOLS contains no duplicate tickers — structural guarantee
+test_universe.py,TestUniverseUniqueness,test_load_universe_sp500_is_unique,load_universe(sp500) returns unique symbols — no dup scan passes
+test_universe.py,TestUniverseUniqueness,test_load_universe_custom_dedupes_input,Custom universe with duplicate entries is deduplicated on load
+test_universe.py,TestUniverseUniqueness,test_load_universe_custom_empty,Empty custom_symbols returns [] (not an error)
+test_broker.py,TestOrderPacing,test_pacing_sleep_called_after_qualify,After qualify IB call — _pace() sleeps for configured duration
+test_broker.py,TestOrderPacing,test_pacing_zero_skips_sleep,order_pacing_seconds=0 — _pace() issues no sleep
+test_broker.py,TestOrderPacing,test_cached_qualify_does_not_pace,Cache hit skips IB call AND skips pacing sleep

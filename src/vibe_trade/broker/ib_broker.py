@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from ib_async import IB, MarketOrder, Stock
+from ib_async import IB, Contract, MarketOrder, Stock
 
 from vibe_trade.broker.base import BaseBroker
 from vibe_trade.broker.models import AccountSummary, OrderRequest, OrderResult, Position
@@ -20,6 +20,7 @@ class IBBroker(BaseBroker):
         self.config = config
         self.mode = mode
         self.ib = IB()
+        self._contract_cache: dict[str, Contract] = {}
 
     async def connect(self) -> None:
         port = self.config.get_port(self.mode)
@@ -56,6 +57,7 @@ class IBBroker(BaseBroker):
         if self.ib.isConnected():
             self.ib.disconnect()
             logger.info("Disconnected from IB")
+        self._contract_cache.clear()
 
     async def get_account_summary(self) -> AccountSummary:
         account_values = await self.ib.accountSummaryAsync()
@@ -100,12 +102,27 @@ class IBBroker(BaseBroker):
             )
         return positions
 
-    async def place_market_order(self, request: OrderRequest) -> OrderResult:
-        contract = Stock(request.symbol, "SMART", "USD")
+    async def _pace(self) -> None:
+        """Sleep between IB-hitting calls to stay under pacing limits."""
+        if self.config.order_pacing_seconds > 0:
+            await asyncio.sleep(self.config.order_pacing_seconds)
+
+    async def _get_qualified_contract(self, symbol: str) -> Contract:
+        cached = self._contract_cache.get(symbol)
+        if cached is not None:
+            return cached
+        contract = Stock(symbol, "SMART", "USD")
         await self.ib.qualifyContractsAsync(contract)
+        await self._pace()
+        self._contract_cache[symbol] = contract
+        return contract
+
+    async def place_market_order(self, request: OrderRequest) -> OrderResult:
+        contract = await self._get_qualified_contract(request.symbol)
 
         order = MarketOrder(request.side, request.quantity)
         trade = self.ib.placeOrder(contract, order)
+        await self._pace()
 
         # Wait briefly for fill
         for _ in range(10):

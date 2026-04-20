@@ -19,6 +19,7 @@ class BrokerConfig(BaseModel):
     account: str = ""
     connect_retries: int = Field(default=3, ge=0, le=10)
     retry_backoff_seconds: float = Field(default=2.0, gt=0, le=60)
+    order_pacing_seconds: float = Field(default=0.05, ge=0, le=5.0)
 
     def get_port(self, mode: str) -> int:
         return self.paper_port if mode == "paper" else self.live_port
