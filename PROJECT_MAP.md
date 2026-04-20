@@ -36,7 +36,8 @@ flowchart TD
 
     subgraph Data["Data Layer"]
         style Data fill:#ea580c,color:#fff,stroke:#c2410c
-        PROV["data/provider.py\nOHLCV candles"]
+        PROV["data/provider.py\nyfinance OHLCV"]
+        YF["Yahoo Finance\n(yfinance)"]
         UNIV["data/universe.py\nS&P 500 symbols"]
     end
 
@@ -87,7 +88,7 @@ flowchart TD
     SCANNER --> IB
     IB --> TWS
     SCANNER --> PROV
-    PROV --> IB
+    PROV --> YF
     SCANNER --> UNIV
     SCANNER --> REG
     REG --> MA & RSI
@@ -149,8 +150,7 @@ sequenceDiagram
 
     loop For each symbol
         SC->>DP: get_candles(symbol, "1h", 60 days)
-        DP->>BR: get_historical_bars()
-        BR-->>DP: OHLCV bars
+        Note over DP: yfinance (not IB)
         DP-->>SC: DataFrame
 
         SC->>ST: evaluate(symbol, candles)
@@ -177,7 +177,7 @@ sequenceDiagram
     Note over SC: Step 6: Trailing Stops
     SC->>DB: get_open_trades()
     loop For each open trade
-        SC->>BR: get_market_price(symbol)
+        SC->>DP: get_candles(symbol) — price from latest close
         SC->>TS: evaluate_trailing_stop(trade, price, ATR)
         alt Stop triggered
             TS-->>SC: should_close=True
@@ -270,7 +270,8 @@ graph LR
     ib --> models_b
     ib --> config
 
-    provider --> ib
+    yf["yfinance (external)"]
+    provider --> yf
 
     ma --> base_s
     ma --> indicators
@@ -507,9 +508,9 @@ flowchart TD
 
 | File | What It Does |
 |------|-------------|
-| `broker/base.py` | Abstract `BaseBroker` interface. All broker implementations must have: `connect()`, `disconnect()`, `get_account_summary()`, `get_positions()`, `place_market_order()`, `get_market_price()`, `cancel_all_orders()` |
-| `broker/models.py` | Data classes: `AccountSummary` (account value, buying power, P&L), `Position` (symbol, qty, cost, market value), `OrderRequest` (symbol, side, qty), `OrderResult` (order ID, status, fill price) |
-| `broker/ib_broker.py` | Interactive Brokers implementation using `ib_async` library. Connects to TWS/Gateway. Paper = port 7497, Live = port 7496. Also has `get_historical_bars()` for fetching OHLCV data. |
+| `broker/base.py` | Abstract `BaseBroker` interface. All broker implementations must have: `connect()`, `disconnect()`, `get_account_summary()`, `get_positions()`, `place_market_order()`, `cancel_all_orders()` |
+| `broker/models.py` | Data classes: `AccountSummary` (account value, available cash, P&L), `Position` (symbol, qty, cost, market value), `OrderRequest` (symbol, side, qty), `OrderResult` (order ID, status, fill price) |
+| `broker/ib_broker.py` | Interactive Brokers implementation using `ib_async` library. Connects to TWS/Gateway. Paper = port 7497, Live = port 7496. Only handles account, positions, and orders — historical data comes from yfinance. |
 
 **Debug tip:** If connection fails, check that TWS/IB Gateway is running and API connections are enabled in TWS settings (Edit > Global Configuration > API > Settings).
 
@@ -519,10 +520,10 @@ flowchart TD
 
 | File | What It Does |
 |------|-------------|
-| `data/provider.py` | `DataProvider` — fetches OHLCV candles from IB via the broker, returns pandas DataFrames. Maps timeframes: "1h" -> "1 hour", "4h" -> "4 hours", "1d" -> "1 day". |
+| `data/provider.py` | `DataProvider` — fetches OHLCV candles from Yahoo Finance via `yfinance`, returns pandas DataFrames. Runs synchronously in a worker thread via `asyncio.to_thread`. Timeframes: "1h", "4h" (maps to 1h), "1d". |
 | `data/universe.py` | Loads stock list. "sp500" returns ~500 hardcoded S&P 500 tickers. "custom" reads from `config.universe.custom_symbols`. |
 
-**Debug tip:** IB has rate limits on historical data requests (~6 requests per 2 seconds). With 500 S&P symbols, a full scan will take several minutes. No rate limiting is implemented yet.
+**Debug tip:** yfinance has no API key and generous rate limits — no need to throttle. Data is delayed ~15min for free tier, which is fine for swing trading.
 
 **Debug tip:** `universe.py` has a hardcoded S&P 500 list. It will go stale as companies are added/removed. Consider updating periodically.
 

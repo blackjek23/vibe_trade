@@ -23,15 +23,34 @@ class IBBroker(BaseBroker):
 
     async def connect(self) -> None:
         port = self.config.get_port(self.mode)
-        logger.info(f"Connecting to IB on {self.config.host}:{port} (mode={self.mode})")
-        await self.ib.connectAsync(
-            host=self.config.host,
-            port=port,
-            clientId=self.config.client_id,
-            timeout=self.config.timeout,
-            account=self.config.account or "",
-        )
-        logger.info("Connected to IB")
+        max_attempts = self.config.connect_retries + 1
+        backoff = self.config.retry_backoff_seconds
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                logger.info(
+                    f"Connecting to IB on {self.config.host}:{port} "
+                    f"(mode={self.mode}, attempt {attempt}/{max_attempts})"
+                )
+                await self.ib.connectAsync(
+                    host=self.config.host,
+                    port=port,
+                    clientId=self.config.client_id,
+                    timeout=self.config.timeout,
+                    account=self.config.account or "",
+                )
+                logger.info("Connected to IB")
+                return
+            except Exception as e:
+                if attempt >= max_attempts:
+                    logger.error(f"Failed to connect to IB after {max_attempts} attempts: {e}")
+                    raise
+                wait = backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    f"Connect attempt {attempt}/{max_attempts} failed ({e!s}); "
+                    f"retrying in {wait:.1f}s..."
+                )
+                await asyncio.sleep(wait)
 
     async def disconnect(self) -> None:
         if self.ib.isConnected():
@@ -39,14 +58,13 @@ class IBBroker(BaseBroker):
             logger.info("Disconnected from IB")
 
     async def get_account_summary(self) -> AccountSummary:
-        account_values = self.ib.accountSummary()
+        account_values = await self.ib.accountSummaryAsync()
         values: dict[str, float] = {}
         account_id = ""
         for av in account_values:
             account_id = av.account
             if av.tag in (
                 "NetLiquidation",
-                "BuyingPower",
                 "TotalCashValue",
                 "UnrealizedPnL",
                 "RealizedPnL",
@@ -59,25 +77,25 @@ class IBBroker(BaseBroker):
         return AccountSummary(
             account_id=account_id,
             net_liquidation=values.get("NetLiquidation", 0.0),
-            buying_power=values.get("BuyingPower", 0.0),
             total_cash=values.get("TotalCashValue", 0.0),
             unrealized_pnl=values.get("UnrealizedPnL", 0.0),
             realized_pnl=values.get("RealizedPnL", 0.0),
         )
 
     async def get_positions(self) -> list[Position]:
-        ib_positions = self.ib.positions()
+        # Use portfolio() instead of positions() — it includes live market data
+        # (marketPrice, marketValue, unrealizedPNL) populated by IB's account update stream.
+        portfolio_items = self.ib.portfolio()
         positions = []
-        for pos in ib_positions:
-            contract = pos.contract
+        for item in portfolio_items:
             positions.append(
                 Position(
-                    symbol=contract.symbol,
-                    quantity=int(pos.position),
-                    avg_cost=pos.avgCost,
-                    market_price=pos.avgCost,  # updated below if market data available
-                    market_value=pos.position * pos.avgCost,
-                    unrealized_pnl=0.0,
+                    symbol=item.contract.symbol,
+                    quantity=int(item.position),
+                    avg_cost=item.averageCost,
+                    market_price=item.marketPrice,
+                    market_value=item.marketValue,
+                    unrealized_pnl=item.unrealizedPNL,
                 )
             )
         return positions
@@ -116,23 +134,6 @@ class IBBroker(BaseBroker):
             status=status,
         )
 
-    async def get_market_price(self, symbol: str) -> float:
-        contract = Stock(symbol, "SMART", "USD")
-        await self.ib.qualifyContractsAsync(contract)
-
-        ticker = self.ib.reqMktData(contract, snapshot=True)
-        for _ in range(10):
-            await asyncio.sleep(0.5)
-            if ticker.last and ticker.last > 0:
-                self.ib.cancelMktData(contract)
-                return ticker.last
-            if ticker.close and ticker.close > 0:
-                self.ib.cancelMktData(contract)
-                return ticker.close
-
-        self.ib.cancelMktData(contract)
-        raise ValueError(f"Could not get market price for {symbol}")
-
     async def cancel_all_orders(self) -> int:
         open_orders = self.ib.openOrders()
         count = len(open_orders)
@@ -140,24 +141,3 @@ class IBBroker(BaseBroker):
             self.ib.reqGlobalCancel()
             logger.info(f"Cancelled {count} open orders")
         return count
-
-    async def get_historical_bars(
-        self,
-        symbol: str,
-        duration: str = "60 D",
-        bar_size: str = "1 hour",
-    ) -> list:
-        """Fetch historical OHLCV bars from IB."""
-        contract = Stock(symbol, "SMART", "USD")
-        await self.ib.qualifyContractsAsync(contract)
-
-        bars = await self.ib.reqHistoricalDataAsync(
-            contract,
-            endDateTime="",
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow="TRADES",
-            useRTH=True,
-            formatDate=1,
-        )
-        return bars

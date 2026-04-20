@@ -29,9 +29,5 @@ class BaseBroker(ABC):
         """Place a market order."""
 
     @abstractmethod
-    async def get_market_price(self, symbol: str) -> float:
-        """Get current market price for a symbol."""
-
-    @abstractmethod
     async def cancel_all_orders(self) -> int:
         """Cancel all open orders. Returns number cancelled."""

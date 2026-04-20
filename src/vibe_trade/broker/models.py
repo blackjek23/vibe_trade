@@ -10,7 +10,6 @@ from datetime import datetime
 class AccountSummary:
     account_id: str
     net_liquidation: float
-    buying_power: float
     total_cash: float
     unrealized_pnl: float
     realized_pnl: float

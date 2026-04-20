@@ -8,6 +8,9 @@ test_config.py,TestBrokerConfig,test_get_port_paper,get_port('paper') returns 74
 test_config.py,TestBrokerConfig,test_get_port_live,get_port('live') returns 7496
 test_config.py,TestBrokerConfig,test_timeout_bounds,Reject timeout outside 1-300 range
 test_config.py,TestBrokerConfig,test_client_id_non_negative,Reject negative client_id
+test_config.py,TestBrokerConfig,test_connect_retries_defaults,Verify defaults: connect_retries=3 retry_backoff_seconds=2.0
+test_config.py,TestBrokerConfig,test_connect_retries_bounds,Reject connect_retries<0 or >10
+test_config.py,TestBrokerConfig,test_retry_backoff_must_be_positive,Reject retry_backoff_seconds<=0 or >60
 test_config.py,TestUniverseConfig,test_default_sp500,Default source is 'sp500'
 test_config.py,TestUniverseConfig,test_custom_symbols_uppercased,Custom symbols get uppercased and trimmed ('aapl' -> 'AAPL')
 test_config.py,TestUniverseConfig,test_empty_strings_stripped,Empty strings and whitespace-only entries removed from symbol list
@@ -63,3 +66,7 @@ test_db.py,TestScanLogRepository,test_complete_scan_with_errors,Complete with er
 test_db.py,TestScanLogRepository,test_complete_scan_not_found,Complete non-existent scan_id — verify no crash (silent no-op)
 test_db.py,TestEngine,test_init_db_creates_tables,Call init_db with temp path — verify all 4 tables exist
 test_db.py,TestEngine,test_get_session_factory_without_init,Call get_session_factory() with no init and no path — expect RuntimeError
+test_broker.py,TestIBBrokerConnectRetry,test_connect_succeeds_first_try,Happy path — connectAsync succeeds on first call no retry needed
+test_broker.py,TestIBBrokerConnectRetry,test_connect_retries_then_succeeds,Fail twice then succeed — verify 3 total calls made
+test_broker.py,TestIBBrokerConnectRetry,test_connect_exhausts_retries_and_raises,All attempts fail — verify original exception propagates after max_attempts
+test_broker.py,TestIBBrokerConnectRetry,test_connect_no_retries_when_disabled,connect_retries=0 — verify exactly 1 attempt then raise

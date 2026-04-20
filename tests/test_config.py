@@ -64,6 +64,23 @@ class TestBrokerConfig:
         with pytest.raises(ValidationError):
             BrokerConfig(client_id=-1)
 
+    def test_connect_retries_defaults(self):
+        c = BrokerConfig()
+        assert c.connect_retries == 3
+        assert c.retry_backoff_seconds == 2.0
+
+    def test_connect_retries_bounds(self):
+        with pytest.raises(ValidationError):
+            BrokerConfig(connect_retries=-1)
+        with pytest.raises(ValidationError):
+            BrokerConfig(connect_retries=11)
+
+    def test_retry_backoff_must_be_positive(self):
+        with pytest.raises(ValidationError):
+            BrokerConfig(retry_backoff_seconds=0)
+        with pytest.raises(ValidationError):
+            BrokerConfig(retry_backoff_seconds=61)
+
 
 class TestUniverseConfig:
     def test_default_sp500(self):

@@ -68,7 +68,7 @@ async def run_scan_cycle(
 
         # Step 4: Load universe and scan
         symbols = load_universe(config.universe)
-        data_provider = DataProvider(broker)
+        data_provider = DataProvider()
         executor = OrderExecutor(broker, trade_repo, config.risk)
 
         pending_signals = []
@@ -133,11 +133,14 @@ async def run_scan_cycle(
         open_trades = trade_repo.get_open_trades()
         for trade in open_trades:
             try:
-                current_price = await broker.get_market_price(trade.symbol)
                 candles = await data_provider.get_candles(
                     trade.symbol, config.strategy.timeframe, lookback_days=30
                 )
-                current_atr = compute_indicators(candles).atr.iloc[-1] if not candles.empty else None
+                if candles.empty:
+                    logger.warning(f"No candles for {trade.symbol}, skipping trailing stop check")
+                    continue
+                current_price = float(candles["close"].iloc[-1])
+                current_atr = compute_indicators(candles).atr.iloc[-1]
 
                 update = evaluate_trailing_stop(
                     trade, current_price, current_atr, config.risk.trailing_stop

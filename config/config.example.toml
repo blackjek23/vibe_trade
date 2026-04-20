@@ -11,6 +11,8 @@ live_port = 7496
 client_id = 1
 timeout = 30
 account = ""                      # IB account ID, blank = first available
+connect_retries = 3               # extra attempts after first failure (0-10)
+retry_backoff_seconds = 2.0       # initial backoff; doubles each retry (2s, 4s, 8s...)
 
 [universe]
 source = "sp500"                  # "sp500" or "custom"
