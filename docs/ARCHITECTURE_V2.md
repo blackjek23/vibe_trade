@@ -157,7 +157,7 @@ Adds:
 | `total_cash` | float | from IB account summary |
 | `open_positions_count` | int | # distinct tickers held |
 
-(Existing columns `realized_pnl`, `unrealized_pnl`, `total_pnl`, `account_value` stay.)
+(Existing columns `realized_pnl`, `unrealized_pnl`, `account_value` stay. `total_pnl` removed — redundant, compute on read as `realized + unrealized`.)
 
 ---
 

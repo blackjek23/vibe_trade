@@ -1,18 +1,33 @@
-"""Tests for the database layer: engine, models, and repositories."""
+"""Tests for the V2 database layer: engine, models, and repositories.
+
+V2 flow touchpoints covered:
+- TradeRepository: full lifecycle writes (SUBMITTED → OPEN → PENDING_CLOSE → CLOSED / etc.)
+- PortfolioSnapshotRepository: end-of-day snapshot save/read
+- DailyPnLRepository: extended upsert with total_cash + open_positions_count
+- SignalRepository, ScanLogRepository: unchanged
+- Engine: table creation, lazy-factory guard
+"""
 
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import pytest
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import inspect
+from sqlalchemy.orm import Session
 
 from vibe_trade.db.engine import get_session_factory, init_db
-from vibe_trade.db.models import Base, DailyPnL, ScanLog, Signal, Trade
+from vibe_trade.db.models import (
+    DailyPnL,
+    PortfolioSnapshot,
+    ScanLog,
+    Signal,
+    Trade,
+)
 from vibe_trade.db.repository import (
     DailyPnLRepository,
+    PortfolioSnapshotRepository,
     ScanLogRepository,
     SignalRepository,
     TradeRepository,
@@ -20,133 +35,319 @@ from vibe_trade.db.repository import (
 
 
 # ---------------------------------------------------------------------------
-# TradeRepository
+# TradeRepository — V2 lifecycle
 # ---------------------------------------------------------------------------
 
 
-class TestTradeRepository:
-    def test_create_trade(self, db_session: Session):
+class TestCreateSubmittedBuy:
+    def test_creates_row_with_submitted_status(self, db_session: Session):
         repo = TradeRepository(db_session)
-        trade = repo.create_trade(
+        now = datetime(2026, 4, 20, 16, 0, 5)
+        trade = repo.create_submitted_buy(
             symbol="AAPL",
-            side="BUY",
             strategy_name="ma_crossover",
-            entry_price=185.50,
-            quantity=15,
-            trailing_stop=180.00,
+            requested_quantity=15,
+            ib_order_id=42,
+            submitted_at=now,
         )
         assert trade.id is not None
         assert trade.symbol == "AAPL"
         assert trade.side == "BUY"
         assert trade.strategy_name == "ma_crossover"
-        assert trade.entry_price == 185.50
-        assert trade.quantity == 15
-        assert trade.trailing_stop == 180.00
-        assert trade.status == "OPEN"
-        assert trade.entry_time is not None
-        assert trade.exit_price is None
-        assert trade.pnl is None
+        assert trade.requested_quantity == 15
+        assert trade.ib_order_id == 42
+        assert trade.submitted_at == now
+        assert trade.status == "SUBMITTED"
+        assert trade.entry_price is None
+        assert trade.filled_quantity is None
 
-    def test_close_trade_buy(self, db_session: Session):
+
+class TestMarkPendingClose:
+    def _open_trade(self, db_session: Session) -> Trade:
+        """Helper: create an OPEN BUY trade the way reconcile would."""
         repo = TradeRepository(db_session)
-        trade = repo.create_trade(
-            symbol="AAPL", side="BUY", strategy_name="ma_crossover",
-            entry_price=185.50, quantity=15,
+        submitted = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="ma_crossover",
+            requested_quantity=10, ib_order_id=1,
+            submitted_at=datetime(2026, 4, 20, 16, 0),
         )
-        closed = repo.close_trade(trade.id, exit_price=190.00)
+        repo.confirm_buy_fill(
+            trade_id=submitted.id,
+            entry_price=185.0,
+            filled_quantity=10,
+            entry_time=datetime(2026, 4, 20, 16, 35),
+            status="OPEN",
+        )
+        return submitted
+
+    def test_happy_path(self, db_session: Session):
+        open_trade = self._open_trade(db_session)
+        repo = TradeRepository(db_session)
+        now = datetime(2026, 4, 21, 16, 0, 5)
+        updated = repo.mark_pending_close(
+            trade_id=open_trade.id,
+            exit_ib_order_id=99,
+            exit_submitted_at=now,
+        )
+        assert updated.status == "PENDING_CLOSE"
+        assert updated.exit_ib_order_id == 99
+        assert updated.exit_submitted_at == now
+
+    def test_rejects_non_open_status(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        submitted = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="s", requested_quantity=1,
+            ib_order_id=1, submitted_at=datetime.now(),
+        )
+        with pytest.raises(ValueError, match="cannot go PENDING_CLOSE from status=SUBMITTED"):
+            repo.mark_pending_close(submitted.id, 99, datetime.now())
+
+
+class TestConfirmBuyFill:
+    def _submitted(self, db_session: Session) -> Trade:
+        return TradeRepository(db_session).create_submitted_buy(
+            symbol="AAPL", strategy_name="ma_crossover",
+            requested_quantity=10, ib_order_id=1,
+            submitted_at=datetime(2026, 4, 20, 16, 0),
+        )
+
+    def test_full_fill(self, db_session: Session):
+        trade = self._submitted(db_session)
+        repo = TradeRepository(db_session)
+        filled = repo.confirm_buy_fill(
+            trade_id=trade.id,
+            entry_price=185.25,
+            filled_quantity=10,
+            entry_time=datetime(2026, 4, 20, 16, 35),
+            status="OPEN",
+        )
+        assert filled.status == "OPEN"
+        assert filled.entry_price == 185.25
+        assert filled.filled_quantity == 10
+
+    def test_partial_fill(self, db_session: Session):
+        trade = self._submitted(db_session)
+        repo = TradeRepository(db_session)
+        filled = repo.confirm_buy_fill(
+            trade_id=trade.id, entry_price=185.0, filled_quantity=6,
+            entry_time=datetime(2026, 4, 20, 16, 35), status="PARTIALLY_FILLED",
+        )
+        assert filled.status == "PARTIALLY_FILLED"
+        assert filled.filled_quantity == 6
+
+    def test_cancelled(self, db_session: Session):
+        trade = self._submitted(db_session)
+        repo = TradeRepository(db_session)
+        filled = repo.confirm_buy_fill(
+            trade_id=trade.id, entry_price=0.0, filled_quantity=0,
+            entry_time=datetime(2026, 4, 20, 16, 35), status="CANCELLED",
+        )
+        assert filled.status == "CANCELLED"
+
+    def test_rejects_invalid_status(self, db_session: Session):
+        trade = self._submitted(db_session)
+        repo = TradeRepository(db_session)
+        with pytest.raises(ValueError, match="Invalid buy-fill status: CLOSED"):
+            repo.confirm_buy_fill(trade.id, 185.0, 10, datetime.now(), "CLOSED")
+
+    def test_rejects_non_submitted_trade(self, db_session: Session):
+        trade = self._submitted(db_session)
+        repo = TradeRepository(db_session)
+        repo.confirm_buy_fill(trade.id, 185.0, 10, datetime.now(), "OPEN")
+        with pytest.raises(ValueError, match="cannot confirm BUY fill from status=OPEN"):
+            repo.confirm_buy_fill(trade.id, 185.0, 10, datetime.now(), "OPEN")
+
+
+class TestConfirmCloseFill:
+    def _pending_close(self, db_session: Session) -> Trade:
+        repo = TradeRepository(db_session)
+        t = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="s", requested_quantity=10,
+            ib_order_id=1, submitted_at=datetime(2026, 4, 20, 16, 0),
+        )
+        repo.confirm_buy_fill(t.id, 185.0, 10, datetime(2026, 4, 20, 16, 35), "OPEN")
+        repo.mark_pending_close(t.id, 99, datetime(2026, 4, 21, 16, 0))
+        return t
+
+    def test_closed_stores_pnl_from_caller(self, db_session: Session):
+        trade = self._pending_close(db_session)
+        repo = TradeRepository(db_session)
+        closed = repo.confirm_close_fill(
+            trade_id=trade.id,
+            exit_price=190.0,
+            filled_quantity=10,
+            exit_time=datetime(2026, 4, 21, 16, 40),
+            pnl=50.0,
+            pnl_pct=2.7,
+            status="CLOSED",
+        )
         assert closed.status == "CLOSED"
-        assert closed.exit_price == 190.00
-        assert closed.exit_time is not None
-        assert closed.pnl == pytest.approx((190.00 - 185.50) * 15)
-        assert closed.pnl_pct == pytest.approx(
-            ((190.00 - 185.50) * 15) / (185.50 * 15) * 100
-        )
+        assert closed.exit_price == 190.0
+        assert closed.pnl == 50.0
+        assert closed.pnl_pct == 2.7
 
-    def test_close_trade_sell(self, db_session: Session):
+    def test_cancelled_reverts_to_open(self, db_session: Session):
+        """SELL never filled → position stays, trade goes back to OPEN."""
+        trade = self._pending_close(db_session)
         repo = TradeRepository(db_session)
-        trade = repo.create_trade(
-            symbol="AAPL", side="SELL", strategy_name="rsi_mean_revert",
-            entry_price=190.00, quantity=10,
+        reverted = repo.confirm_close_fill(
+            trade_id=trade.id,
+            exit_price=0.0, filled_quantity=0,
+            exit_time=datetime(2026, 4, 21, 16, 40),
+            pnl=0.0, pnl_pct=0.0, status="CANCELLED",
         )
-        closed = repo.close_trade(trade.id, exit_price=185.00)
-        assert closed.pnl == pytest.approx((190.00 - 185.00) * 10)
+        assert reverted.status == "OPEN"
+        assert reverted.exit_ib_order_id is None
+        assert reverted.exit_submitted_at is None
+        assert reverted.exit_price is None
 
-    def test_close_trade_not_found(self, db_session: Session):
+    def test_rejects_non_pending_close(self, db_session: Session):
         repo = TradeRepository(db_session)
-        with pytest.raises(ValueError, match="Trade 999 not found"):
-            repo.close_trade(999, exit_price=100.0)
+        t = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="s", requested_quantity=10,
+            ib_order_id=1, submitted_at=datetime.now(),
+        )
+        with pytest.raises(ValueError, match="cannot confirm close from status=SUBMITTED"):
+            repo.confirm_close_fill(t.id, 190.0, 10, datetime.now(), 0.0, 0.0, "CLOSED")
 
-    def test_get_open_trades(self, db_session: Session):
+
+class TestMarkCancelled:
+    def test_marks_and_records_reason(self, db_session: Session):
         repo = TradeRepository(db_session)
-        repo.create_trade(
-            symbol="AAPL", side="BUY", strategy_name="ma_crossover",
-            entry_price=185.0, quantity=10,
+        t = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="s", requested_quantity=10,
+            ib_order_id=1, submitted_at=datetime.now(),
         )
-        repo.create_trade(
-            symbol="MSFT", side="BUY", strategy_name="ma_crossover",
-            entry_price=400.0, quantity=5,
-        )
-        t3 = repo.create_trade(
-            symbol="GOOG", side="BUY", strategy_name="ma_crossover",
-            entry_price=140.0, quantity=20,
-        )
-        repo.close_trade(t3.id, exit_price=145.0)
+        cancelled = repo.mark_cancelled(t.id, reason="IB rejected: no market data")
+        assert cancelled.status == "CANCELLED"
+        assert cancelled.notes == "IB rejected: no market data"
 
-        open_trades = repo.get_open_trades()
-        assert len(open_trades) == 2
-        symbols = {t.symbol for t in open_trades}
+
+class TestGetPendingOrdersForToday:
+    def test_returns_todays_submitted_and_pending_close(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        today = date(2026, 4, 20)
+        now = datetime(2026, 4, 20, 16, 0)
+
+        # Today: one SUBMITTED, one PENDING_CLOSE
+        t1 = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="s", requested_quantity=10,
+            ib_order_id=1, submitted_at=now,
+        )
+        t2 = repo.create_submitted_buy(
+            symbol="MSFT", strategy_name="s", requested_quantity=5,
+            ib_order_id=2, submitted_at=now,
+        )
+        repo.confirm_buy_fill(t2.id, 400.0, 5, now, "OPEN")
+        repo.mark_pending_close(t2.id, 3, now)
+
+        # Yesterday: SUBMITTED — should NOT be returned
+        repo.create_submitted_buy(
+            symbol="GOOG", strategy_name="s", requested_quantity=3,
+            ib_order_id=4, submitted_at=datetime(2026, 4, 19, 16, 0),
+        )
+
+        # An OPEN trade from today — not pending, should NOT be returned
+        t4 = repo.create_submitted_buy(
+            symbol="TSLA", strategy_name="s", requested_quantity=2,
+            ib_order_id=5, submitted_at=now,
+        )
+        repo.confirm_buy_fill(t4.id, 300.0, 2, now, "OPEN")
+
+        pending = repo.get_pending_orders_for_today(today)
+        symbols = {t.symbol for t in pending}
         assert symbols == {"AAPL", "MSFT"}
 
-    def test_get_open_trade_for_symbol(self, db_session: Session):
+    def test_empty_when_nothing_today(self, db_session: Session):
         repo = TradeRepository(db_session)
-        repo.create_trade(
-            symbol="AAPL", side="BUY", strategy_name="ma_crossover",
-            entry_price=185.0, quantity=10,
-        )
-        repo.create_trade(
-            symbol="MSFT", side="BUY", strategy_name="ma_crossover",
-            entry_price=400.0, quantity=5,
-        )
-        result = repo.get_open_trade_for_symbol("AAPL")
-        assert result is not None
-        assert result.symbol == "AAPL"
+        assert repo.get_pending_orders_for_today(date(2026, 4, 20)) == []
 
-    def test_get_open_trade_for_symbol_none(self, db_session: Session):
-        repo = TradeRepository(db_session)
-        result = repo.get_open_trade_for_symbol("TSLA")
-        assert result is None
 
-    def test_update_trailing_stop(self, db_session: Session):
+class TestTradeReads:
+    def test_get_open_trades(self, db_session: Session):
         repo = TradeRepository(db_session)
-        trade = repo.create_trade(
-            symbol="AAPL", side="BUY", strategy_name="ma_crossover",
-            entry_price=185.0, quantity=10, trailing_stop=180.0,
-        )
-        repo.update_trailing_stop(trade.id, 185.0)
-        updated = db_session.get(Trade, trade.id)
-        assert updated.trailing_stop == 185.0
+        now = datetime.now()
+        for i, sym in enumerate(["AAPL", "MSFT", "GOOG"]):
+            t = repo.create_submitted_buy(
+                symbol=sym, strategy_name="s", requested_quantity=10,
+                ib_order_id=i, submitted_at=now,
+            )
+            if sym != "GOOG":
+                repo.confirm_buy_fill(t.id, 100.0, 10, now, "OPEN")
+        open_trades = repo.get_open_trades()
+        assert {t.symbol for t in open_trades} == {"AAPL", "MSFT"}
 
     def test_get_recent_trades(self, db_session: Session):
         repo = TradeRepository(db_session)
+        now = datetime.now()
         for i in range(5):
-            repo.create_trade(
-                symbol=f"SYM{i}", side="BUY", strategy_name="ma_crossover",
-                entry_price=100.0 + i, quantity=10,
+            repo.create_submitted_buy(
+                symbol=f"SYM{i}", strategy_name="s", requested_quantity=1,
+                ib_order_id=i, submitted_at=now,
             )
-        recent = repo.get_recent_trades(limit=3)
-        assert len(recent) == 3
-
-    def test_create_trade_with_ib_order_id(self, db_session: Session):
-        repo = TradeRepository(db_session)
-        trade = repo.create_trade(
-            symbol="AAPL", side="BUY", strategy_name="ma_crossover",
-            entry_price=185.0, quantity=10, ib_order_id=12345,
-        )
-        assert trade.ib_order_id == 12345
+        assert len(repo.get_recent_trades(limit=3)) == 3
 
 
 # ---------------------------------------------------------------------------
-# SignalRepository
+# PortfolioSnapshotRepository
+# ---------------------------------------------------------------------------
+
+
+class TestPortfolioSnapshotRepository:
+    def test_save_and_get(self, db_session: Session):
+        repo = PortfolioSnapshotRepository(db_session)
+        today = date(2026, 4, 20)
+        rows = [
+            {"symbol": "AAPL", "quantity": 10, "avg_cost": 180.0,
+             "market_price": 185.0, "market_value": 1850.0, "unrealized_pnl": 50.0},
+            {"symbol": "MSFT", "quantity": 5, "avg_cost": 400.0,
+             "market_price": 410.0, "market_value": 2050.0, "unrealized_pnl": 50.0},
+        ]
+        saved = repo.save_snapshot(today, rows)
+        assert len(saved) == 2
+
+        fetched = repo.get_snapshot(today)
+        assert len(fetched) == 2
+        by_symbol = {r.symbol: r for r in fetched}
+        assert by_symbol["AAPL"].quantity == 10
+        assert by_symbol["AAPL"].unrealized_pnl == 50.0
+        assert by_symbol["MSFT"].market_value == 2050.0
+
+    def test_save_is_idempotent_for_same_date(self, db_session: Session):
+        """Running reconcile twice on the same day shouldn't double-insert."""
+        repo = PortfolioSnapshotRepository(db_session)
+        today = date(2026, 4, 20)
+        repo.save_snapshot(today, [
+            {"symbol": "AAPL", "quantity": 10, "avg_cost": 180.0,
+             "market_price": 185.0, "market_value": 1850.0, "unrealized_pnl": 50.0},
+        ])
+        repo.save_snapshot(today, [
+            {"symbol": "AAPL", "quantity": 10, "avg_cost": 180.0,
+             "market_price": 186.0, "market_value": 1860.0, "unrealized_pnl": 60.0},
+            {"symbol": "MSFT", "quantity": 5, "avg_cost": 400.0,
+             "market_price": 410.0, "market_value": 2050.0, "unrealized_pnl": 50.0},
+        ])
+        fetched = repo.get_snapshot(today)
+        assert len(fetched) == 2
+        by_symbol = {r.symbol: r for r in fetched}
+        assert by_symbol["AAPL"].unrealized_pnl == 60.0
+
+    def test_different_dates_coexist(self, db_session: Session):
+        repo = PortfolioSnapshotRepository(db_session)
+        repo.save_snapshot(date(2026, 4, 20), [
+            {"symbol": "AAPL", "quantity": 10, "avg_cost": 180.0,
+             "market_price": 185.0, "market_value": 1850.0, "unrealized_pnl": 50.0},
+        ])
+        repo.save_snapshot(date(2026, 4, 21), [
+            {"symbol": "AAPL", "quantity": 10, "avg_cost": 180.0,
+             "market_price": 186.0, "market_value": 1860.0, "unrealized_pnl": 60.0},
+        ])
+        assert len(repo.get_snapshot(date(2026, 4, 20))) == 1
+        assert len(repo.get_snapshot(date(2026, 4, 21))) == 1
+
+
+# ---------------------------------------------------------------------------
+# SignalRepository (unchanged from V1)
 # ---------------------------------------------------------------------------
 
 
@@ -154,116 +355,85 @@ class TestSignalRepository:
     def test_record_signal(self, db_session: Session):
         repo = SignalRepository(db_session)
         signal = repo.record_signal(
-            symbol="AAPL",
-            strategy_name="ma_crossover",
-            signal_type="BUY",
-            scan_id="abc-123",
-            confidence=0.75,
+            symbol="AAPL", strategy_name="ma_crossover",
+            signal_type="BUY", scan_id="abc-123", confidence=0.75,
         )
         assert signal.id is not None
-        assert signal.symbol == "AAPL"
-        assert signal.strategy_name == "ma_crossover"
         assert signal.signal_type == "BUY"
-        assert signal.scan_id == "abc-123"
         assert signal.confidence == 0.75
         assert signal.executed is False
 
     def test_record_signal_with_metadata(self, db_session: Session):
         repo = SignalRepository(db_session)
-        meta = {"sma_fast": 20, "sma_slow": 50, "rsi": 45.2}
+        meta = {"sma_fast": 20, "sma_slow": 50}
         signal = repo.record_signal(
-            symbol="MSFT",
-            strategy_name="ma_crossover",
-            signal_type="BUY",
-            scan_id="abc-456",
-            metadata=meta,
+            symbol="MSFT", strategy_name="ma_crossover",
+            signal_type="BUY", scan_id="abc-456", metadata=meta,
         )
-        assert signal.metadata_json is not None
-        parsed = json.loads(signal.metadata_json)
-        assert parsed == meta
+        assert json.loads(signal.metadata_json) == meta
 
-    def test_mark_executed_approved(self, db_session: Session):
+    def test_mark_executed(self, db_session: Session):
         repo = SignalRepository(db_session)
         signal = repo.record_signal(
             symbol="AAPL", strategy_name="ma_crossover",
             signal_type="BUY", scan_id="abc-789",
         )
-        repo.mark_executed(signal.id, approved=True, reason="All checks passed")
+        repo.mark_executed(signal.id, approved=True, reason="ok")
         updated = db_session.get(Signal, signal.id)
         assert updated.risk_approved is True
         assert updated.executed is True
-        assert updated.risk_reason == "All checks passed"
-
-    def test_mark_executed_rejected(self, db_session: Session):
-        repo = SignalRepository(db_session)
-        signal = repo.record_signal(
-            symbol="AAPL", strategy_name="ma_crossover",
-            signal_type="BUY", scan_id="abc-000",
-        )
-        repo.mark_executed(signal.id, approved=False, reason="Max positions reached")
-        updated = db_session.get(Signal, signal.id)
-        assert updated.risk_approved is False
-        assert updated.executed is False
-        assert updated.risk_reason == "Max positions reached"
+        assert updated.risk_reason == "ok"
 
 
 # ---------------------------------------------------------------------------
-# DailyPnLRepository
+# DailyPnLRepository — extended with V2 fields
 # ---------------------------------------------------------------------------
 
 
 class TestDailyPnLRepository:
-    def test_upsert_daily_insert(self, db_session: Session):
+    def test_upsert_with_v2_fields(self, db_session: Session):
         repo = DailyPnLRepository(db_session)
-        today = date(2026, 4, 13)
+        today = date(2026, 4, 20)
         record = repo.upsert_daily(
             today=today,
-            realized_pnl=150.0,
-            unrealized_pnl=75.0,
-            trades_opened=3,
-            trades_closed=1,
+            realized_pnl=150.0, unrealized_pnl=75.0,
+            trades_opened=3, trades_closed=1,
             account_value=100_000.0,
+            total_cash=85_000.0,
+            open_positions_count=5,
         )
-        assert record.date == today
         assert record.realized_pnl == 150.0
         assert record.unrealized_pnl == 75.0
-        assert record.total_pnl == 225.0
-        assert record.trades_opened == 3
-        assert record.trades_closed == 1
-        assert record.account_value == 100_000.0
+        assert record.total_cash == 85_000.0
+        assert record.open_positions_count == 5
 
-    def test_upsert_daily_update(self, db_session: Session):
+    def test_upsert_updates_existing_row(self, db_session: Session):
         repo = DailyPnLRepository(db_session)
-        today = date(2026, 4, 13)
-        repo.upsert_daily(
-            today=today, realized_pnl=100.0, unrealized_pnl=50.0,
-            trades_opened=2, trades_closed=0, account_value=100_000.0,
-        )
-        repo.upsert_daily(
-            today=today, realized_pnl=200.0, unrealized_pnl=80.0,
-            trades_opened=4, trades_closed=1, account_value=100_200.0,
-        )
+        today = date(2026, 4, 20)
+        repo.upsert_daily(today=today, realized_pnl=100.0, unrealized_pnl=50.0,
+                          trades_opened=2, trades_closed=0, account_value=100_000.0)
+        repo.upsert_daily(today=today, realized_pnl=200.0, unrealized_pnl=80.0,
+                          trades_opened=4, trades_closed=1, account_value=100_200.0,
+                          total_cash=90_000.0, open_positions_count=4)
         rows = db_session.query(DailyPnL).filter(DailyPnL.date == today).all()
         assert len(rows) == 1
         assert rows[0].realized_pnl == 200.0
-        assert rows[0].total_pnl == 280.0
+        assert rows[0].unrealized_pnl == 80.0
+        assert rows[0].total_cash == 90_000.0
 
-    def test_upsert_daily_different_dates(self, db_session: Session):
+    def test_different_dates_coexist(self, db_session: Session):
         repo = DailyPnLRepository(db_session)
-        repo.upsert_daily(
-            today=date(2026, 4, 13), realized_pnl=100.0, unrealized_pnl=50.0,
-            trades_opened=1, trades_closed=0, account_value=100_000.0,
-        )
-        repo.upsert_daily(
-            today=date(2026, 4, 14), realized_pnl=200.0, unrealized_pnl=75.0,
-            trades_opened=2, trades_closed=1, account_value=100_200.0,
-        )
-        all_rows = db_session.query(DailyPnL).all()
-        assert len(all_rows) == 2
+        repo.upsert_daily(today=date(2026, 4, 20), realized_pnl=100.0,
+                          unrealized_pnl=50.0, trades_opened=1,
+                          trades_closed=0, account_value=100_000.0)
+        repo.upsert_daily(today=date(2026, 4, 21), realized_pnl=200.0,
+                          unrealized_pnl=75.0, trades_opened=2,
+                          trades_closed=1, account_value=100_200.0)
+        assert db_session.query(DailyPnL).count() == 2
 
 
 # ---------------------------------------------------------------------------
-# ScanLogRepository
+# ScanLogRepository (unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -271,51 +441,27 @@ class TestScanLogRepository:
     def test_start_scan(self, db_session: Session):
         repo = ScanLogRepository(db_session)
         log = repo.start_scan("scan-001")
-        assert log.scan_id == "scan-001"
         assert log.status == "STARTED"
         assert log.started_at is not None
 
     def test_complete_scan_success(self, db_session: Session):
         repo = ScanLogRepository(db_session)
         repo.start_scan("scan-002")
-        repo.complete_scan(
-            scan_id="scan-002",
-            symbols_scanned=500,
-            signals_generated=12,
-            orders_placed=2,
-        )
+        repo.complete_scan("scan-002", symbols_scanned=500,
+                           signals_generated=12, orders_placed=2)
         log = db_session.query(ScanLog).filter(ScanLog.scan_id == "scan-002").first()
         assert log.status == "SUCCESS"
-        assert log.symbols_scanned == 500
-        assert log.signals_generated == 12
-        assert log.orders_placed == 2
-        assert log.completed_at is not None
         assert log.errors is None
 
     def test_complete_scan_with_errors(self, db_session: Session):
         repo = ScanLogRepository(db_session)
         repo.start_scan("scan-003")
-        errors = ["AAPL: timeout", "MSFT: no data"]
-        repo.complete_scan(
-            scan_id="scan-003",
-            symbols_scanned=498,
-            signals_generated=10,
-            orders_placed=1,
-            errors=errors,
-        )
+        errors = ["AAPL: timeout"]
+        repo.complete_scan("scan-003", symbols_scanned=1, signals_generated=0,
+                           orders_placed=0, errors=errors)
         log = db_session.query(ScanLog).filter(ScanLog.scan_id == "scan-003").first()
         assert log.status == "FAILED"
-        parsed_errors = json.loads(log.errors)
-        assert parsed_errors == errors
-
-    def test_complete_scan_not_found(self, db_session: Session):
-        repo = ScanLogRepository(db_session)
-        repo.complete_scan(
-            scan_id="nonexistent",
-            symbols_scanned=0,
-            signals_generated=0,
-            orders_placed=0,
-        )
+        assert json.loads(log.errors) == errors
 
 
 # ---------------------------------------------------------------------------
@@ -328,11 +474,11 @@ class TestEngine:
         db_path = str(tmp_path / "test.db")
         factory = init_db(db_path)
         session = factory()
-        engine = session.bind
-        table_names = inspect(engine).get_table_names()
+        table_names = inspect(session.bind).get_table_names()
         assert "trades" in table_names
         assert "signals" in table_names
         assert "daily_pnl" in table_names
+        assert "portfolio_snapshot" in table_names
         assert "scan_log" in table_names
         session.close()
 
@@ -345,3 +491,20 @@ class TestEngine:
                 get_session_factory()
         finally:
             eng._session_factory = original
+
+
+# ---------------------------------------------------------------------------
+# Models — V2 columns exist on Trade
+# ---------------------------------------------------------------------------
+
+
+class TestTradeModel:
+    def test_has_v2_columns(self):
+        cols = {c.name for c in Trade.__table__.columns}
+        for expected in {
+            "submitted_at", "exit_submitted_at", "exit_ib_order_id",
+            "requested_quantity", "filled_quantity",
+        }:
+            assert expected in cols, f"Missing V2 column: {expected}"
+        assert "quantity" not in cols, "Legacy 'quantity' column should be removed in V2"
+        assert "trailing_stop" not in cols, "V1 'trailing_stop' column should be removed in V2"

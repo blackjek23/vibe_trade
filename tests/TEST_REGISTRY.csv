@@ -46,29 +46,37 @@ test_config.py,TestStrategyConfig,test_valid_timeframes,Accept all valid timefra
 test_config.py,TestAppConfig,test_defaults,Verify all sub-configs wire up correctly with defaults
 test_config.py,TestAppConfig,test_load_config_no_file,load_config() returns defaults when config file doesn't exist
 test_config.py,TestAppConfig,test_load_config_from_example,load_config() correctly loads from the example TOML file
-test_db.py,TestTradeRepository,test_create_trade,Insert a trade and verify all fields: symbol side entry_price quantity status=OPEN trailing_stop
-test_db.py,TestTradeRepository,test_close_trade_buy,Close a BUY trade — verify exit_price status=CLOSED pnl=(exit-entry)*qty pnl_pct correct
-test_db.py,TestTradeRepository,test_close_trade_sell,Close a SELL trade — verify pnl=(entry-exit)*qty (inverse formula)
-test_db.py,TestTradeRepository,test_close_trade_not_found,Close non-existent trade_id — expect ValueError
-test_db.py,TestTradeRepository,test_get_open_trades,Create 2 open + 1 closed — verify only 2 returned
-test_db.py,TestTradeRepository,test_get_open_trade_for_symbol,Create AAPL and MSFT trades — query AAPL — verify only AAPL returned
-test_db.py,TestTradeRepository,test_get_open_trade_for_symbol_none,Query symbol with no open trades — verify None returned
-test_db.py,TestTradeRepository,test_update_trailing_stop,Create trade with stop=180 — update to 185 — verify new value persisted
-test_db.py,TestTradeRepository,test_get_recent_trades,Create 5 trades — call with limit=3 — verify only 3 returned
-test_db.py,TestTradeRepository,test_create_trade_with_ib_order_id,Verify ib_order_id is stored correctly
+test_db.py,TestCreateSubmittedBuy,test_creates_row_with_submitted_status,V2: record-job inserts a SUBMITTED BUY with requested_quantity + ib_order_id + submitted_at
+test_db.py,TestMarkPendingClose,test_happy_path,V2: record-job flips an OPEN trade to PENDING_CLOSE with exit_ib_order_id + exit_submitted_at
+test_db.py,TestMarkPendingClose,test_rejects_non_open_status,V2: can't go PENDING_CLOSE from SUBMITTED — ValueError
+test_db.py,TestConfirmBuyFill,test_full_fill,V2: reconcile sets SUBMITTED BUY → OPEN with entry_price + filled_quantity + entry_time
+test_db.py,TestConfirmBuyFill,test_partial_fill,V2: SUBMITTED BUY → PARTIALLY_FILLED when IB fills only part of requested qty
+test_db.py,TestConfirmBuyFill,test_cancelled,V2: SUBMITTED BUY → CANCELLED when order never filled
+test_db.py,TestConfirmBuyFill,test_rejects_invalid_status,V2: reject status values outside {OPEN PARTIALLY_FILLED CANCELLED}
+test_db.py,TestConfirmBuyFill,test_rejects_non_submitted_trade,V2: can't confirm BUY fill on a non-SUBMITTED trade
+test_db.py,TestConfirmCloseFill,test_closed_stores_pnl_from_caller,V2: PENDING_CLOSE → CLOSED stores exit_price + pnl + pnl_pct as received (from IB.fills)
+test_db.py,TestConfirmCloseFill,test_cancelled_reverts_to_open,V2: PENDING_CLOSE → CANCELLED reverts trade to OPEN (position not sold — kept)
+test_db.py,TestConfirmCloseFill,test_rejects_non_pending_close,V2: can't confirm close on a non-PENDING_CLOSE trade
+test_db.py,TestMarkCancelled,test_marks_and_records_reason,V2: force a trade to CANCELLED and record the reason in notes
+test_db.py,TestGetPendingOrdersForToday,test_returns_todays_submitted_and_pending_close,V2: reconcile query returns SUBMITTED BUYs + PENDING_CLOSE SELLs submitted today (excludes yesterday and non-pending)
+test_db.py,TestGetPendingOrdersForToday,test_empty_when_nothing_today,V2: empty DB returns [] not an error
+test_db.py,TestTradeReads,test_get_open_trades,get_open_trades returns only OPEN-status rows (not SUBMITTED not PENDING_CLOSE)
+test_db.py,TestTradeReads,test_get_recent_trades,get_recent_trades honors limit
+test_db.py,TestPortfolioSnapshotRepository,test_save_and_get,V2: reconcile saves N position rows per date — get_snapshot returns them ordered by symbol
+test_db.py,TestPortfolioSnapshotRepository,test_save_is_idempotent_for_same_date,V2: re-running reconcile on same day overwrites instead of double-inserting
+test_db.py,TestPortfolioSnapshotRepository,test_different_dates_coexist,V2: snapshots for different dates are independent
 test_db.py,TestSignalRepository,test_record_signal,Insert a signal — verify all fields including scan_id and executed=False
 test_db.py,TestSignalRepository,test_record_signal_with_metadata,Pass metadata dict — verify stored as JSON string
-test_db.py,TestSignalRepository,test_mark_executed_approved,Record then approve — verify risk_approved=True executed=True
-test_db.py,TestSignalRepository,test_mark_executed_rejected,Record then reject — verify risk_approved=False executed=False reason stored
-test_db.py,TestDailyPnLRepository,test_upsert_daily_insert,First call creates new row — verify total_pnl = realized + unrealized
-test_db.py,TestDailyPnLRepository,test_upsert_daily_update,Call twice same date — verify row updated not duplicated
-test_db.py,TestDailyPnLRepository,test_upsert_daily_different_dates,Call with two dates — verify 2 separate rows exist
+test_db.py,TestSignalRepository,test_mark_executed,Record then approve — verify risk_approved=True executed=True reason stored
+test_db.py,TestDailyPnLRepository,test_upsert_with_v2_fields,V2: upsert_daily stores total_cash + open_positions_count alongside V1 fields
+test_db.py,TestDailyPnLRepository,test_upsert_updates_existing_row,Call twice same date — verify row updated not duplicated — V2 fields persisted
+test_db.py,TestDailyPnLRepository,test_different_dates_coexist,Different dates produce separate rows
 test_db.py,TestScanLogRepository,test_start_scan,Create scan log — verify scan_id status=STARTED started_at set
 test_db.py,TestScanLogRepository,test_complete_scan_success,Start then complete with no errors — verify status=SUCCESS all counts stored
 test_db.py,TestScanLogRepository,test_complete_scan_with_errors,Complete with errors list — verify status=FAILED errors stored as JSON
-test_db.py,TestScanLogRepository,test_complete_scan_not_found,Complete non-existent scan_id — verify no crash (silent no-op)
-test_db.py,TestEngine,test_init_db_creates_tables,Call init_db with temp path — verify all 4 tables exist
+test_db.py,TestEngine,test_init_db_creates_tables,Call init_db with temp path — verify trades signals daily_pnl portfolio_snapshot scan_log tables exist
 test_db.py,TestEngine,test_get_session_factory_without_init,Call get_session_factory() with no init and no path — expect RuntimeError
+test_db.py,TestTradeModel,test_has_v2_columns,V2: Trade table has submitted_at exit_submitted_at exit_ib_order_id requested_quantity filled_quantity columns AND no legacy 'quantity' or 'trailing_stop' columns
 test_broker.py,TestIBBrokerConnectRetry,test_connect_succeeds_first_try,Happy path — connectAsync succeeds on first call no retry needed
 test_broker.py,TestIBBrokerConnectRetry,test_connect_retries_then_succeeds,Fail twice then succeed — verify 3 total calls made
 test_broker.py,TestIBBrokerConnectRetry,test_connect_exhausts_retries_and_raises,All attempts fail — verify original exception propagates after max_attempts
@@ -76,10 +84,10 @@ test_broker.py,TestIBBrokerConnectRetry,test_connect_no_retries_when_disabled,co
 test_broker.py,TestContractCaching,test_same_symbol_qualified_only_once,Place 3 orders for AAPL — verify qualifyContractsAsync called once
 test_broker.py,TestContractCaching,test_different_symbols_each_qualified_once,Orders for AAPL+MSFT (interleaved) — each qualified exactly once
 test_broker.py,TestContractCaching,test_disconnect_clears_cache,Disconnect empties _contract_cache to avoid stale state on reconnect
+test_broker.py,TestOrderPacing,test_pacing_sleep_called_after_qualify,After qualify IB call — _pace() sleeps for configured duration
+test_broker.py,TestOrderPacing,test_pacing_zero_skips_sleep,order_pacing_seconds=0 — _pace() issues no sleep
+test_broker.py,TestOrderPacing,test_cached_qualify_does_not_pace,Cache hit skips IB call AND skips pacing sleep
 test_universe.py,TestUniverseUniqueness,test_sp500_list_has_no_duplicates,SP500_SYMBOLS contains no duplicate tickers — structural guarantee
 test_universe.py,TestUniverseUniqueness,test_load_universe_sp500_is_unique,load_universe(sp500) returns unique symbols — no dup scan passes
 test_universe.py,TestUniverseUniqueness,test_load_universe_custom_dedupes_input,Custom universe with duplicate entries is deduplicated on load
 test_universe.py,TestUniverseUniqueness,test_load_universe_custom_empty,Empty custom_symbols returns [] (not an error)
-test_broker.py,TestOrderPacing,test_pacing_sleep_called_after_qualify,After qualify IB call — _pace() sleeps for configured duration
-test_broker.py,TestOrderPacing,test_pacing_zero_skips_sleep,order_pacing_seconds=0 — _pace() issues no sleep
-test_broker.py,TestOrderPacing,test_cached_qualify_does_not_pace,Cache hit skips IB call AND skips pacing sleep
