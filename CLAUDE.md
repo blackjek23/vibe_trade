@@ -33,10 +33,11 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-- **Day 2** (Database layer): complete — 23 tests
-- **Day 3** (Broker module): complete — cleanup, retry logic, contract caching, pacing. 84 tests total.
-- **V2 architecture:** planned, committed as `docs/ARCHITECTURE_V2.md`. Implementation starts at Session A (DB schema + repo).
-- **V1 scanner:** still exists (`src/vibe_trade/scanner.py`) — to be deleted in Session E.
+- **Day 2 + 3** (V1 DB + broker): complete.
+- **Session A** (V2 DB schema + repo): complete — Trade V2 columns, PortfolioSnapshot model, extended DailyPnL. Legacy `quantity`, V1 `trailing_stop`, redundant `total_pnl` removed. 92 tests total (31 DB).
+- **Live paper scratches:** 7 scripts in `scratches/` covering every IB↔DB shape for submit/record/reconcile — see scripts list below.
+- **Next:** Session B (broker: `get_order_status` for reconcile) then Session C (`submit` job).
+- **V1 scanner/risk/orders:** still present under `src/vibe_trade/`, now broken at runtime (they reference removed `trailing_stop` / `quantity`). To be deleted in Session E.
 
 ## Project layout
 
@@ -62,7 +63,14 @@ tests/
 docs/
 └── ARCHITECTURE_V2.md   # full plan for the three-phase refactor
 
-scratch_positions.py     # diagnostic: connect to IB paper, print positions
+scratches/               # live IB-paper shape-discovery + DB-write scripts (not pytest)
+├── scratch_positions.py       # get_positions + account summary
+├── scratch_save_to_db.py      # account + positions → daily_pnl + portfolio_snapshot
+├── scratch_orders_today.py    # ib.trades() + ib.openOrders() — raw shape
+├── scratch_orders_save.py     # BUYs → SUBMITTED, SELLs flip OPEN→PENDING_CLOSE (record equivalent)
+├── scratch_place_order.py     # list of (SIDE, TICKER, QTY) — places BUY/SELL via broker
+├── scratch_fills_today.py     # ib.fills() raw + grouped by order_id
+└── scratch_reconcile.py       # fills → status transitions + snapshot + daily_pnl (reconcile equivalent)
 ```
 
 ## Conventions
@@ -82,8 +90,9 @@ scratch_positions.py     # diagnostic: connect to IB paper, print positions
 .venv/Scripts/python -m pytest              # full suite
 .venv/Scripts/python -m pytest tests/test_broker.py -v
 
-# Diagnostic against live IB paper
-.venv/Scripts/python scratch_positions.py    # requires TWS running on 7497
+# Diagnostic against live IB paper (requires TWS running on 7497, mode=paper)
+.venv/Scripts/python scratches/scratch_positions.py       # data-pull, safe anytime
+.venv/Scripts/python scratches/scratch_reconcile.py       # writes to data/test_paper.db
 
 # CLI (V1 only for now; V2 commands land in Sessions C/D)
 .venv/Scripts/python -m vibe_trade.cli --help
