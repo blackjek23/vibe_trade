@@ -11,7 +11,7 @@ What it writes:
     - 1 row in `daily_pnl` for today (account summary values + positions count)
     - N rows in `portfolio_snapshot` for today (one per held ticker)
 
-DB location: `data/test_paper.db` — separate from prod, gitignored, idempotent (rerun safe).
+DB location: `data/test_paper.db` -- separate from prod, gitignored, idempotent (rerun safe).
 Inspect afterward with DB Browser for SQLite, DBeaver, or `sqlite3` CLI.
 """
 
@@ -77,8 +77,8 @@ async def main() -> None:
                 today=today,
                 realized_pnl=account.realized_pnl,
                 unrealized_pnl=account.unrealized_pnl,
-                trades_opened=0,  # placeholder — populated by record/reconcile jobs later
-                trades_closed=0,  # placeholder — populated by record/reconcile jobs later
+                trades_opened=0,  # placeholder -- populated by record/reconcile jobs later
+                trades_closed=0,  # placeholder -- populated by record/reconcile jobs later
                 account_value=account.net_liquidation,
                 total_cash=account.total_cash,
                 open_positions_count=len(positions),
@@ -121,7 +121,7 @@ async def main() -> None:
             print(f"  created_at:            {fetched_daily.created_at}")
 
             fetched_snaps = snap_repo.get_snapshot(today)
-            print(f"\n[portfolio_snapshot rows — {len(fetched_snaps)}]")
+            print(f"\n[portfolio_snapshot rows -- {len(fetched_snaps)}]")
             header = (
                 f"{'Symbol':<8} | {'Qty':>6} | {'Avg Cost':>10} | "
                 f"{'Mkt Price':>10} | {'Mkt Value':>12} | {'Unreal P&L':>12}"
@@ -146,4 +146,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted by user — disconnect should have run via try/finally.")
+        print("\nInterrupted by user -- disconnect should have run via try/finally.")

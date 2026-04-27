@@ -10,7 +10,7 @@ Prerequisites:
     - config/config.toml with `mode = "paper"` (falls back to defaults otherwise)
 
 What it does:
-    - Pulls `broker.ib.trades()` — all orders the client has seen today
+    - Pulls `broker.ib.trades()` -- all orders the client has seen today
     - For each BUY:   inserts a `trades` row with status=SUBMITTED
     - For each SELL:  finds the matching OPEN trade in the DB, flips to PENDING_CLOSE
     - Reads back and prints every trade row
@@ -24,7 +24,7 @@ Known limitation (by design, not a bug):
     becomes OPEN after `reconcile` at 23:30. Tomorrow's SELL on that position
     then has a match to flip.
 
-DB location: `data/test_paper.db` — shared with `scratch_save_to_db.py`, gitignored.
+DB location: `data/test_paper.db` -- shared with `scratch_save_to_db.py`, gitignored.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ async def main() -> None:
                 qty = int(t.order.totalQuantity)
 
                 if action == "BUY":
-                    # Dedup by ib_order_id — rerun safe.
+                    # Dedup by ib_order_id -- rerun safe.
                     existing = (
                         session.query(Trade)
                         .filter(Trade.ib_order_id == order_id)
@@ -104,7 +104,7 @@ async def main() -> None:
                         continue
                     new_trade = repo.create_submitted_buy(
                         symbol=symbol,
-                        strategy_name="manual",  # placeholder — real record uses signal's strategy
+                        strategy_name="manual",  # placeholder -- real record uses signal's strategy
                         requested_quantity=qty,
                         ib_order_id=order_id,
                         submitted_at=datetime.now(),
@@ -112,7 +112,7 @@ async def main() -> None:
                     buys_inserted += 1
                     print(
                         f"  [BUY      ] {symbol:<6s} order_id={order_id} req_qty={qty} "
-                        f"→ trade_id={new_trade.id} status=SUBMITTED"
+                        f"-> trade_id={new_trade.id} status=SUBMITTED"
                     )
 
                 elif action == "SELL":
@@ -138,7 +138,7 @@ async def main() -> None:
                         sells_skipped_no_match += 1
                         print(
                             f"  [skip SELL ] {symbol:<6s} order_id={order_id} "
-                            f"— no OPEN trade to flip to PENDING_CLOSE"
+                            f"-- no OPEN trade to flip to PENDING_CLOSE"
                         )
                         continue
 
@@ -151,7 +151,7 @@ async def main() -> None:
                     sells_flipped += 1
                     print(
                         f"  [SELL     ] {symbol:<6s} order_id={order_id} "
-                        f"→ trade_id={open_trade.id} OPEN → PENDING_CLOSE"
+                        f"-> trade_id={open_trade.id} OPEN -> PENDING_CLOSE"
                     )
 
                 else:
@@ -183,15 +183,15 @@ async def main() -> None:
                     submitted = (
                         tr.submitted_at.strftime("%Y-%m-%d %H:%M:%S")
                         if tr.submitted_at
-                        else "—"
+                        else "--"
                     )
                     print(
                         f"{tr.id:>3} | {tr.symbol:<8} | {tr.side:<4} | "
                         f"{tr.requested_quantity or 0:>7d} | "
                         f"{tr.filled_quantity if tr.filled_quantity is not None else 0:>6d} | "
                         f"{tr.status:<14} | "
-                        f"{tr.ib_order_id if tr.ib_order_id is not None else '—':>7} | "
-                        f"{tr.exit_ib_order_id if tr.exit_ib_order_id is not None else '—':>7} | "
+                        f"{tr.ib_order_id if tr.ib_order_id is not None else '--':>7} | "
+                        f"{tr.exit_ib_order_id if tr.exit_ib_order_id is not None else '--':>7} | "
                         f"{submitted:<19}"
                     )
 
@@ -207,4 +207,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted by user — disconnect should have run via try/finally.")
+        print("\nInterrupted by user -- disconnect should have run via try/finally.")

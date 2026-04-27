@@ -6,20 +6,20 @@ Run with:
 Prerequisites:
     - TWS or IB Gateway running on paper port 7497 with API enabled
     - config/config.toml with `mode = "paper"` (falls back to defaults otherwise)
-    - Market is open (Asia/Jerusalem 16:30–23:00) — outside hours orders queue, don't fill
+    - Market is open (Asia/Jerusalem 16:30–23:00) -- outside hours orders queue, don't fill
 
 Edit the ORDERS list below. Each entry is (SIDE, TICKER, QTY):
 
-    ("BUY",  "F",  1)       → buy 1 share of F
-    ("SELL", "F",  1)       → sell 1 share of F
-    ("SELL", None, 1)       → sell 1 share of whichever long you hold the most of
+    ("BUY",  "F",  1)       -> buy 1 share of F
+    ("SELL", "F",  1)       -> sell 1 share of F
+    ("SELL", None, 1)       -> sell 1 share of whichever long you hold the most of
                               (auto-pick only valid for SELL; errors otherwise)
 
 Orders are placed in sequence. A single 3-second banner shows all planned orders
 before anything goes out, so Ctrl+C bails cleanly.
 
 A BUY + SELL of the same ticker (both market orders) fills in milliseconds each
-and nets to ~0 position change minus a tiny commission/spread — fine for smoke-
+and nets to ~0 position change minus a tiny commission/spread -- fine for smoke-
 testing both paths in one run, not for real position management.
 
 Per-order failures don't abort the rest; the loop continues and prints a summary.
@@ -38,8 +38,8 @@ from vibe_trade.config import load_config
 # Edit this list to choose what to place. (SIDE, TICKER_or_None, QTY)
 # ---------------------------------------------------------------------------
 ORDERS: list[tuple[str, str | None, int]] = [
-    ("BUY",  "F", 1),
-    ("SELL", "F", 1),
+    ("BUY",  "T",  1),
+    ("SELL", None, 1),  # auto-pick biggest long holding
 ]
 # ---------------------------------------------------------------------------
 
@@ -114,7 +114,7 @@ async def main() -> None:
         print(f"  About to place {len(planned)} order(s) against PAPER:")
         for i, (side, resolved, qty) in enumerate(planned, start=1):
             if resolved is None:
-                print(f"    #{i}: {side} {qty} of <auto-pick failed: no longs held> — will SKIP")
+                print(f"    #{i}: {side} {qty} of <auto-pick failed: no longs held> -- will SKIP")
             else:
                 print(f"    #{i}: {side} {qty} x {resolved} (market)")
         print("  Ctrl+C within 3 seconds to abort.")
@@ -126,7 +126,7 @@ async def main() -> None:
         failed = 0
         for i, (side, resolved, qty) in enumerate(planned, start=1):
             if resolved is None:
-                print(f"\n[{i}] SKIP — no long positions to SELL.")
+                print(f"\n[{i}] SKIP -- no long positions to SELL.")
                 skipped += 1
                 continue
             print(f"\n[{i}] Submitting {side} {qty} x {resolved}...")
@@ -154,4 +154,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nAborted by user — disconnect should have run via try/finally.")
+        print("\nAborted by user -- disconnect should have run via try/finally.")

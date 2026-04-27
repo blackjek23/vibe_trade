@@ -13,22 +13,22 @@ What it does (per V2 architecture):
     2. Loads today's pending trades from DB (SUBMITTED BUYs + PENDING_CLOSE SELLs)
     3. For each pending trade:
         - SUBMITTED BUY: aggregate fills by `ib_order_id`
-            * fully filled → confirm_buy_fill(status=OPEN)
-            * partial     → confirm_buy_fill(status=PARTIALLY_FILLED)
-            * no fills + order Cancelled → mark_cancelled
-            * no fills + still working → skip (log only)
+            * fully filled -> confirm_buy_fill(status=OPEN)
+            * partial     -> confirm_buy_fill(status=PARTIALLY_FILLED)
+            * no fills + order Cancelled -> mark_cancelled
+            * no fills + still working -> skip (log only)
         - PENDING_CLOSE: aggregate fills by `exit_ib_order_id`
-            * fully filled → confirm_close_fill(status=CLOSED, pnl from IB fills)
-            * partial     → confirm_close_fill(status=PARTIALLY_FILLED)
-            * no fills + cancelled → confirm_close_fill(status=CANCELLED) reverts to OPEN
-            * no fills + still working → skip
+            * fully filled -> confirm_close_fill(status=CLOSED, pnl from IB fills)
+            * partial     -> confirm_close_fill(status=PARTIALLY_FILLED)
+            * no fills + cancelled -> confirm_close_fill(status=CANCELLED) reverts to OPEN
+            * no fills + still working -> skip
     4. Saves PortfolioSnapshot rows (one per held ticker)
     5. Upserts DailyPnL with real `trades_opened` / `trades_closed` counts
 
 Idempotent: rerunning is safe. Already-reconciled trades (status OPEN/CLOSED/etc.)
 are not in `get_pending_orders_for_today` so they're skipped. Snapshot delete-then-insert.
 
-DB location: `data/test_paper.db` — same as `scratch_save_to_db.py`, gitignored.
+DB location: `data/test_paper.db` -- same as `scratch_save_to_db.py`, gitignored.
 """
 
 from __future__ import annotations
@@ -122,8 +122,8 @@ async def main() -> None:
             pending = trade_repo.get_pending_orders_for_today(today)
             print(f"\n=== Reconciling {len(pending)} pending trade(s) from DB ===")
 
-            opened_count = 0   # SUBMITTED → OPEN or PARTIALLY_FILLED
-            closed_count = 0   # PENDING_CLOSE → CLOSED or PARTIALLY_FILLED
+            opened_count = 0   # SUBMITTED -> OPEN or PARTIALLY_FILLED
+            closed_count = 0   # PENDING_CLOSE -> CLOSED or PARTIALLY_FILLED
             cancelled_count = 0
             skipped_count = 0
 
@@ -171,7 +171,7 @@ async def main() -> None:
                     print(
                         f"  [FILL  BUY] trade_id={trade.id} {trade.symbol:<6s} "
                         f"order_id={oid} req={trade.requested_quantity} filled={filled_qty} "
-                        f"avg=${avg_px:.2f} → {new_status}"
+                        f"avg=${avg_px:.2f} -> {new_status}"
                     )
 
                 elif trade.status == "PENDING_CLOSE":
@@ -197,7 +197,7 @@ async def main() -> None:
                             cancelled_count += 1
                             print(
                                 f"  [CANCEL SELL] trade_id={trade.id} {trade.symbol} "
-                                f"order_id={oid} status={order_status} → reverted to OPEN"
+                                f"order_id={oid} status={order_status} -> reverted to OPEN"
                             )
                         else:
                             skipped_count += 1
@@ -231,7 +231,7 @@ async def main() -> None:
                     print(
                         f"  [FILL SELL] trade_id={trade.id} {trade.symbol:<6s} "
                         f"order_id={oid} filled={filled_qty} avg=${avg_px:.2f} "
-                        f"pnl=${realized_pnl:+.2f} ({pnl_pct:+.2f}%) → {new_status}"
+                        f"pnl=${realized_pnl:+.2f} ({pnl_pct:+.2f}%) -> {new_status}"
                     )
 
                 else:
@@ -241,8 +241,8 @@ async def main() -> None:
                     )
 
             print("\n--- reconcile summary ---")
-            print(f"  opened (SUBMITTED→OPEN/PARTIAL):      {opened_count}")
-            print(f"  closed (PENDING_CLOSE→CLOSED/PARTIAL):{closed_count}")
+            print(f"  opened (SUBMITTED->OPEN/PARTIAL):      {opened_count}")
+            print(f"  closed (PENDING_CLOSE->CLOSED/PARTIAL):{closed_count}")
             print(f"  cancelled:                            {cancelled_count}")
             print(f"  skipped (still working):              {skipped_count}")
 
@@ -302,10 +302,10 @@ async def main() -> None:
                 print(header)
                 print("-" * len(header))
                 for tr in todays_trades:
-                    entry_s = f"${tr.entry_price:.2f}" if tr.entry_price else "—"
-                    exit_s = f"${tr.exit_price:.2f}" if tr.exit_price else "—"
-                    pnl_s = f"${tr.pnl:+.2f}" if tr.pnl is not None else "—"
-                    pct_s = f"{tr.pnl_pct:+.2f}%" if tr.pnl_pct is not None else "—"
+                    entry_s = f"${tr.entry_price:.2f}" if tr.entry_price else "--"
+                    exit_s = f"${tr.exit_price:.2f}" if tr.exit_price else "--"
+                    pnl_s = f"${tr.pnl:+.2f}" if tr.pnl is not None else "--"
+                    pct_s = f"{tr.pnl_pct:+.2f}%" if tr.pnl_pct is not None else "--"
                     print(
                         f"{tr.id:>3} | {tr.symbol:<8} | {tr.side:<4} | "
                         f"{tr.requested_quantity:>4d} | "
@@ -326,4 +326,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted by user — disconnect should have run via try/finally.")
+        print("\nInterrupted by user -- disconnect should have run via try/finally.")

@@ -10,7 +10,7 @@ Prerequisites:
 Safety:
     - Refuses to run if config says `mode = "live"`
     - Uses client_id = main config client_id + 50 (won't collide with a running bot)
-    - try/finally + KeyboardInterrupt handling so we always disconnect cleanly —
+    - try/finally + KeyboardInterrupt handling so we always disconnect cleanly --
       no ghost connections holding a client_id slot after a crash
 """
 
@@ -30,7 +30,7 @@ async def main() -> None:
         print(f"ERROR: config says mode={config.general.mode!r}; refusing to run against live.")
         sys.exit(1)
 
-    # Bump client_id by +50 for scripts — avoids colliding with a running bot.
+    # Bump client_id by +50 for scripts -- avoids colliding with a running bot.
     broker_config = config.broker.model_copy()
     broker_config.client_id = config.broker.client_id + 50
 
@@ -54,7 +54,7 @@ async def main() -> None:
         print("\n=== Positions (via broker.get_positions) ===")
         positions = await broker.get_positions()
         if not positions:
-            print("(no open positions — buy something in TWS first to see a populated list)")
+            print("(no open positions -- buy something in TWS first to see a populated list)")
         else:
             header = (
                 f"{'Symbol':<8} | {'Qty':>6} | {'Avg Cost':>10} | "
@@ -83,4 +83,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted by user — disconnect should have run via try/finally.")
+        print("\nInterrupted by user -- disconnect should have run via try/finally.")

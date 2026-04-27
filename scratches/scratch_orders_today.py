@@ -9,8 +9,8 @@ Prerequisites:
 
 What it does:
     - Connects to IB paper
-    - Pulls `ib.trades()` — all trade records the client knows about (today + session lifetime)
-    - Pulls `ib.openOrders()` — subset that are still working / pending
+    - Pulls `ib.trades()` -- all trade records the client knows about (today + session lifetime)
+    - Pulls `ib.openOrders()` -- subset that are still working / pending
     - Prints both so you can see the raw shape `record` job will consume
 
 Empty output is valid: if no orders exist for this session, both lists are empty.
@@ -67,16 +67,16 @@ async def main() -> None:
         # it a beat to hydrate before we read.
         await asyncio.sleep(1.0)
 
-        print("\n=== broker.ib.trades() — all trade records this client knows about ===")
+        print("\n=== broker.ib.trades() -- all trade records this client knows about ===")
         trades = list(broker.ib.trades())
         print(f"Count: {len(trades)}")
         if trades:
             for t in trades:
                 print(_fmt_trade_row(t))
         else:
-            print("  (none — no orders submitted in this session yet)")
+            print("  (none -- no orders submitted in this session yet)")
 
-        print("\n=== broker.ib.openOrders() — subset still pending / working ===")
+        print("\n=== broker.ib.openOrders() -- subset still pending / working ===")
         open_orders = list(broker.ib.openOrders())
         print(f"Count: {len(open_orders)}")
         for o in open_orders:
@@ -87,7 +87,7 @@ async def main() -> None:
                 f"type={o.orderType}"
             )
         if not open_orders:
-            print("  (none — nothing pending)")
+            print("  (none -- nothing pending)")
 
     finally:
         await broker.disconnect()
@@ -98,4 +98,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted by user — disconnect should have run via try/finally.")
+        print("\nInterrupted by user -- disconnect should have run via try/finally.")

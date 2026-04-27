@@ -9,13 +9,13 @@ Prerequisites:
 
 What it does:
     - Connects to IB paper
-    - Pulls `ib.fills()` — every execution the client has seen this session
+    - Pulls `ib.fills()` -- every execution the client has seen this session
     - Prints each fill's shape: order_id, symbol, side, shares, price, time, realized P&L, commission
 
 This is the raw shape the `reconcile` job will consume at 23:30 to populate
 `entry_price`, `filled_quantity`, `entry_time`, `exit_price`, `exit_time`, `pnl`, `pnl_pct`.
 
-Note: `ib.fills()` is client-id scoped — it only shows fills for orders this client
+Note: `ib.fills()` is client-id scoped -- it only shows fills for orders this client
 submitted. Order placed by a different client_id or TWS UI won't appear.
 
 Empty output is valid: if you haven't placed orders in this session, the list is empty.
@@ -73,16 +73,16 @@ async def main() -> None:
         # ib_async populates fills via the account-update stream; give it a beat.
         await asyncio.sleep(1.0)
 
-        print("\n=== broker.ib.fills() — all executions this client knows about ===")
+        print("\n=== broker.ib.fills() -- all executions this client knows about ===")
         fills = list(broker.ib.fills())
         print(f"Count: {len(fills)}")
         if fills:
             for f in fills:
                 print(_fmt_fill_row(f))
         else:
-            print("  (none — no executions in this session yet)")
+            print("  (none -- no executions in this session yet)")
 
-        # Also show fills grouped by order_id — this is how reconcile will aggregate them.
+        # Also show fills grouped by order_id -- this is how reconcile will aggregate them.
         if fills:
             from collections import defaultdict
 
@@ -120,4 +120,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted by user — disconnect should have run via try/finally.")
+        print("\nInterrupted by user -- disconnect should have run via try/finally.")
