@@ -140,6 +140,7 @@ class TradeRepository:
             # SELL never filled — position is still ours.
             trade.status = "OPEN"
             trade.exit_ib_order_id = None
+            trade.exit_perm_id = None
             trade.exit_submitted_at = None
         else:
             trade.exit_price = exit_price
@@ -187,6 +188,22 @@ class TradeRepository:
                 )
             )
             .all()
+        )
+
+    def find_by_perm_id(self, perm_id: int) -> Trade | None:
+        """Cross-process dedup target: BUY-side IB persistent ID."""
+        return (
+            self.session.query(Trade)
+            .filter(Trade.perm_id == perm_id)
+            .first()
+        )
+
+    def find_by_exit_perm_id(self, exit_perm_id: int) -> Trade | None:
+        """Cross-process dedup target: SELL-side IB persistent ID."""
+        return (
+            self.session.query(Trade)
+            .filter(Trade.exit_perm_id == exit_perm_id)
+            .first()
         )
 
     def get_recent_trades(self, limit: int = 20) -> list[Trade]:

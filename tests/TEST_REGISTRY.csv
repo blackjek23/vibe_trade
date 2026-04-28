@@ -148,3 +148,30 @@ test_submit.py,TestPositionCap,test_buys_during_run_count_toward_cap,Live count:
 test_submit.py,TestPerSymbolErrors,test_data_fetch_failure_doesnt_abort,Empty candles for one ticker -> processed as HOLD others continue
 test_submit.py,TestPerSymbolErrors,test_exception_in_one_ticker_doesnt_abort,RuntimeError on one symbol -> recorded in errors[] others continue
 test_submit.py,TestNoDbWrites,test_run_submit_signature_has_no_db_param,Regression guard: V2 invariant -- run_submit signature must not accept session/db params
+test_db.py,TestTradeReads,test_find_by_perm_id_returns_match,V2: find_by_perm_id returns the trade with matching perm_id (cross-process dedup)
+test_db.py,TestTradeReads,test_find_by_perm_id_returns_none_for_missing,V2: find_by_perm_id returns None when no row matches
+test_db.py,TestTradeReads,test_find_by_exit_perm_id_returns_match,V2: find_by_exit_perm_id returns trade with matching exit_perm_id
+test_db.py,TestTradeReads,test_find_by_exit_perm_id_returns_none_for_missing,V2: find_by_exit_perm_id returns None when no row matches
+test_record.py,TestEmpty,test_no_fills_no_db_writes,Empty fills -> no DB writes
+test_record.py,TestBuyFills,test_buy_inserts_submitted_row,BUY fill -> SUBMITTED row with perm_id symbol qty submitted_at strategy_name
+test_record.py,TestBuyFills,test_buy_dedup_by_perm_id,Re-running with same fills doesn't double-insert (perm_id dedup)
+test_record.py,TestBuyFills,test_partial_fills_aggregated_by_perm_id,Multiple fills with same permId sum to total shares (single DB row)
+test_record.py,TestBuyFills,test_strategy_name_override,strategy_name parameter overrides default 'donchian'
+test_record.py,TestSellFills,test_sell_flips_open_to_pending_close,SELL fill on held position -> exit_perm_id set status=PENDING_CLOSE
+test_record.py,TestSellFills,test_sell_dedup_by_exit_perm_id,Re-running SELL doesn't double-flip (exit_perm_id dedup)
+test_record.py,TestSellFills,test_sell_with_no_open_trade_skipped,SELL with no matching OPEN trade -> skipped no DB write
+test_record.py,TestMixedAndErrors,test_buy_and_sell_in_same_run,BUY + SELL fills processed in one run independently
+test_record.py,TestMixedAndErrors,test_unknown_side_recorded_as_error,Unknown side (not BOT/SLD) recorded in errors[] no DB write
+test_record.py,TestMixedAndErrors,test_per_perm_id_exception_doesnt_abort,Malformed fill raises -> recorded in errors[] other fills still process
+test_reconcile.py,TestNoPending,test_no_pending_no_transitions,No pending trades -> no transitions
+test_reconcile.py,TestBuyReconciliation,test_full_fill_transitions_to_open,SUBMITTED + full fills -> OPEN with entry_price filled_quantity entry_time
+test_reconcile.py,TestBuyReconciliation,test_partial_fill_transitions_to_partially_filled,SUBMITTED + partial fills -> PARTIALLY_FILLED
+test_reconcile.py,TestBuyReconciliation,test_no_fills_cancelled_marks_cancelled,SUBMITTED + no fills + Cancelled status -> mark_cancelled
+test_reconcile.py,TestBuyReconciliation,test_no_fills_still_working_skipped,SUBMITTED + no fills + still-working status -> untouched
+test_reconcile.py,TestSellReconciliation,test_full_fill_closes_with_realized_pnl,PENDING_CLOSE + fills -> CLOSED with realized PnL from commissionReport
+test_reconcile.py,TestSellReconciliation,test_cancelled_sell_reverts_to_open,PENDING_CLOSE + cancelled -> reverted to OPEN exit_perm_id cleared
+test_reconcile.py,TestSellReconciliation,test_partial_sell_fills_partially_filled,PENDING_CLOSE + partial fills -> PARTIALLY_FILLED
+test_reconcile.py,TestPortfolioSnapshot,test_writes_snapshot_for_each_position,One portfolio_snapshot row per held position with all OHLC fields
+test_reconcile.py,TestPortfolioSnapshot,test_snapshot_idempotent_on_rerun,Re-running reconcile keeps exactly 1 snapshot row per date (delete-then-insert)
+test_reconcile.py,TestDailyPnL,test_upserts_with_real_counts,daily_pnl row has trades_opened/closed real counts plus account fields
+test_reconcile.py,TestRobustness,test_per_trade_exception_doesnt_abort,Malformed fill on one trade -> recorded other trades still process

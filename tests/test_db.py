@@ -312,6 +312,40 @@ class TestTradeReads:
             )
         assert len(repo.get_recent_trades(limit=3)) == 3
 
+    def test_find_by_perm_id_returns_match(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="donchian", requested_quantity=10,
+            ib_order_id=42, submitted_at=datetime.now(), perm_id=507476881,
+        )
+        found = repo.find_by_perm_id(507476881)
+        assert found is not None
+        assert found.symbol == "AAPL"
+
+    def test_find_by_perm_id_returns_none_for_missing(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        assert repo.find_by_perm_id(999999) is None
+
+    def test_find_by_exit_perm_id_returns_match(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        # Create OPEN trade then mark pending_close with exit_perm_id
+        submitted = repo.create_submitted_buy(
+            symbol="AAPL", strategy_name="donchian", requested_quantity=10,
+            ib_order_id=42, submitted_at=datetime.now(),
+        )
+        repo.confirm_buy_fill(submitted.id, 100.0, 10, datetime.now(), "OPEN")
+        repo.mark_pending_close(
+            submitted.id, exit_ib_order_id=99,
+            exit_submitted_at=datetime.now(), exit_perm_id=507476882,
+        )
+        found = repo.find_by_exit_perm_id(507476882)
+        assert found is not None
+        assert found.id == submitted.id
+
+    def test_find_by_exit_perm_id_returns_none_for_missing(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        assert repo.find_by_exit_perm_id(999999) is None
+
 
 # ---------------------------------------------------------------------------
 # PortfolioSnapshotRepository

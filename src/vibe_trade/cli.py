@@ -140,6 +140,135 @@ def _print_submit_summary(result) -> None:
 
 
 @app.command()
+def record(
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """V2 record job (16:25 Asia/Jerusalem).
+
+    Reads today's fills from IB, persists each as SUBMITTED in the DB
+    (BUYs) or flips matching OPEN -> PENDING_CLOSE (SELLs). Cross-process
+    dedup by `permId`. No order placement.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    init_db(config.general.db_path)
+    asyncio.run(_run_record_cli(config))
+
+
+async def _run_record_cli(config) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.db.engine import init_db as _init
+    from vibe_trade.db.repository import TradeRepository
+    from vibe_trade.jobs.record import run_record
+    from vibe_trade.jobs.submit import RECORD_CLIENT_ID
+
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = RECORD_CLIENT_ID
+    broker = IBBroker(broker_config, mode=config.general.mode)
+    session_factory = _init(config.general.db_path)
+
+    console.print(
+        f"[bold]Record[/bold] mode={config.general.mode} "
+        f"client_id={RECORD_CLIENT_ID}"
+    )
+
+    await broker.connect()
+    session = session_factory()
+    try:
+        # Give ib_async a beat to hydrate the fill cache after connect.
+        await asyncio.sleep(1.0)
+        repo = TradeRepository(session)
+        result = await run_record(broker=broker, repo=repo)
+    finally:
+        session.close()
+        await broker.disconnect()
+
+    table = Table(title="Record Result")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_row("fills seen", str(result.fills_seen))
+    table.add_row("unique permIds", str(result.perm_ids_seen))
+    table.add_row("BUYs inserted", str(result.buys_inserted))
+    table.add_row("BUYs skipped (dup)", str(result.buys_skipped_dup))
+    table.add_row("SELLs flipped to PENDING_CLOSE", str(result.sells_flipped))
+    table.add_row("SELLs skipped (dup)", str(result.sells_skipped_dup))
+    table.add_row("SELLs skipped (no OPEN match)", str(result.sells_skipped_no_open))
+    console.print(table)
+    if result.errors:
+        console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
+        for e in result.errors[:10]:
+            console.print(f"  - {e}")
+
+
+@app.command()
+def reconcile(
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """V2 reconcile job (23:30 Asia/Jerusalem).
+
+    Finalizes today's pending trades by reading IB fills + orderStatus,
+    transitioning SUBMITTED -> OPEN/PARTIAL/CANCELLED and PENDING_CLOSE
+    -> CLOSED/PARTIAL with realized P&L. Writes portfolio_snapshot and
+    upserts daily_pnl with real counts.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    init_db(config.general.db_path)
+    asyncio.run(_run_reconcile_cli(config))
+
+
+async def _run_reconcile_cli(config) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.db.engine import init_db as _init
+    from vibe_trade.db.repository import (
+        DailyPnLRepository,
+        PortfolioSnapshotRepository,
+        TradeRepository,
+    )
+    from vibe_trade.jobs.reconcile import run_reconcile
+    from vibe_trade.jobs.submit import RECONCILE_CLIENT_ID
+
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = RECONCILE_CLIENT_ID
+    broker = IBBroker(broker_config, mode=config.general.mode)
+    session_factory = _init(config.general.db_path)
+
+    console.print(
+        f"[bold]Reconcile[/bold] mode={config.general.mode} "
+        f"client_id={RECONCILE_CLIENT_ID}"
+    )
+
+    await broker.connect()
+    session = session_factory()
+    try:
+        await asyncio.sleep(1.0)
+        result = await run_reconcile(
+            broker=broker,
+            trade_repo=TradeRepository(session),
+            snap_repo=PortfolioSnapshotRepository(session),
+            daily_repo=DailyPnLRepository(session),
+        )
+    finally:
+        session.close()
+        await broker.disconnect()
+
+    table = Table(title="Reconcile Result")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_row("pending DB rows", str(result.pending_count))
+    table.add_row("opened (SUBMITTED -> OPEN/PARTIAL)", str(result.opened))
+    table.add_row("closed (PENDING_CLOSE -> CLOSED/PARTIAL)", str(result.closed))
+    table.add_row("cancelled", str(result.cancelled))
+    table.add_row("skipped (still working)", str(result.skipped_still_working))
+    table.add_row("portfolio_snapshot rows", str(result.snapshot_rows))
+    console.print(table)
+    if result.errors:
+        console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
+        for e in result.errors[:10]:
+            console.print(f"  - {e}")
+
+
+@app.command()
 def scan(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
 ) -> None:
