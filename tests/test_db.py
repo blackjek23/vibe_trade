@@ -56,10 +56,23 @@ class TestCreateSubmittedBuy:
         assert trade.strategy_name == "ma_crossover"
         assert trade.requested_quantity == 15
         assert trade.ib_order_id == 42
+        assert trade.perm_id is None  # default when not provided
         assert trade.submitted_at == now
         assert trade.status == "SUBMITTED"
         assert trade.entry_price is None
         assert trade.filled_quantity is None
+
+    def test_stores_perm_id_when_provided(self, db_session: Session):
+        repo = TradeRepository(db_session)
+        trade = repo.create_submitted_buy(
+            symbol="AAPL",
+            strategy_name="ma_crossover",
+            requested_quantity=15,
+            ib_order_id=42,
+            submitted_at=datetime(2026, 4, 20, 16, 0, 5),
+            perm_id=507476881,  # IB persistent ID, survives reconnects
+        )
+        assert trade.perm_id == 507476881
 
 
 class TestMarkPendingClose:
@@ -92,6 +105,18 @@ class TestMarkPendingClose:
         assert updated.status == "PENDING_CLOSE"
         assert updated.exit_ib_order_id == 99
         assert updated.exit_submitted_at == now
+        assert updated.exit_perm_id is None  # default when not provided
+
+    def test_stores_exit_perm_id_when_provided(self, db_session: Session):
+        open_trade = self._open_trade(db_session)
+        repo = TradeRepository(db_session)
+        updated = repo.mark_pending_close(
+            trade_id=open_trade.id,
+            exit_ib_order_id=99,
+            exit_submitted_at=datetime(2026, 4, 21, 16, 0, 5),
+            exit_perm_id=507476882,
+        )
+        assert updated.exit_perm_id == 507476882
 
     def test_rejects_non_open_status(self, db_session: Session):
         repo = TradeRepository(db_session)
@@ -504,7 +529,21 @@ class TestTradeModel:
         for expected in {
             "submitted_at", "exit_submitted_at", "exit_ib_order_id",
             "requested_quantity", "filled_quantity",
+            "perm_id", "exit_perm_id",  # cross-process dedup targets
         }:
             assert expected in cols, f"Missing V2 column: {expected}"
         assert "quantity" not in cols, "Legacy 'quantity' column should be removed in V2"
         assert "trailing_stop" not in cols, "V1 'trailing_stop' column should be removed in V2"
+
+    def test_perm_id_is_indexed(self):
+        # perm_id is the cross-process dedup target -- must be indexed for fast lookup.
+        idx_columns = set()
+        for idx in Trade.__table__.indexes:
+            for col in idx.columns:
+                idx_columns.add(col.name)
+        # SQLAlchemy also surfaces single-column indexes via column.index=True
+        for col in Trade.__table__.columns:
+            if col.index:
+                idx_columns.add(col.name)
+        assert "perm_id" in idx_columns
+        assert "exit_perm_id" in idx_columns

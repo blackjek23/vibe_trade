@@ -14,7 +14,6 @@ from vibe_trade.config import (
     RiskConfig,
     SchedulerConfig,
     StrategyConfig,
-    TrailingStopConfig,
     UniverseConfig,
     load_config,
 )
@@ -143,42 +142,32 @@ class TestSchedulerConfig:
             SchedulerConfig(trading_days=["monday"])
 
 
-class TestTrailingStopConfig:
-    def test_defaults(self):
-        c = TrailingStopConfig()
-        assert c.method == "atr"
-        assert c.atr_multiplier == 1.5
-
-    def test_multiplier_must_be_positive(self):
-        with pytest.raises(ValidationError):
-            TrailingStopConfig(atr_multiplier=0)
-        with pytest.raises(ValidationError):
-            TrailingStopConfig(atr_multiplier=-1)
-
-    def test_percentage_bounds(self):
-        with pytest.raises(ValidationError):
-            TrailingStopConfig(percentage=0)
-        with pytest.raises(ValidationError):
-            TrailingStopConfig(percentage=51)
-
-
 class TestRiskConfig:
-    def test_defaults(self):
+    def test_defaults_match_locked_v2_spec(self):
         c = RiskConfig()
-        assert c.max_risk_per_trade_pct == 1.0
-        assert c.max_open_positions == 5
+        assert c.pct_per_position == 0.018
+        assert c.max_open_positions == 50
 
-    def test_rejects_negative_risk(self):
+    def test_rejects_zero_pct(self):
         with pytest.raises(ValidationError):
-            RiskConfig(max_risk_per_trade_pct=-1)
+            RiskConfig(pct_per_position=0)
+
+    def test_rejects_pct_over_one(self):
+        with pytest.raises(ValidationError):
+            RiskConfig(pct_per_position=1.5)
 
     def test_rejects_zero_positions(self):
         with pytest.raises(ValidationError):
             RiskConfig(max_open_positions=0)
 
-    def test_exposure_bounds(self):
+    def test_rejects_excessive_positions(self):
         with pytest.raises(ValidationError):
-            RiskConfig(max_portfolio_exposure_pct=101)
+            RiskConfig(max_open_positions=200)
+
+    def test_no_v1_trailing_stop_field(self):
+        # Regression guard: V1 had RiskConfig.trailing_stop, V2 must not.
+        c = RiskConfig()
+        assert not hasattr(c, "trailing_stop")
 
 
 class TestMACrossoverConfig:
@@ -249,7 +238,7 @@ class TestAppConfig:
         c = AppConfig()
         assert c.general.mode == "paper"
         assert c.broker.paper_port == 7497
-        assert c.risk.max_open_positions == 5
+        assert c.risk.max_open_positions == 50
 
     def test_load_config_no_file(self):
         """Should return defaults when no config file exists."""

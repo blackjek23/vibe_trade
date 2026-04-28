@@ -36,14 +36,21 @@ class TradeRepository:
         requested_quantity: int,
         ib_order_id: int,
         submitted_at: datetime,
+        perm_id: int | None = None,
     ) -> Trade:
-        """Called by `record` when a BUY order submitted at 16:00 is seen in IB's today list."""
+        """Called by `record` when a BUY order submitted at 16:00 is seen in IB's today list.
+
+        `perm_id` is IB's persistent order ID. It survives client reconnects and
+        is the cross-process dedup target. `ib_order_id` is the session-scoped
+        orderId — informational only, may be 0 when read from a separate process.
+        """
         trade = Trade(
             symbol=symbol,
             side="BUY",
             strategy_name=strategy_name,
             requested_quantity=requested_quantity,
             ib_order_id=ib_order_id,
+            perm_id=perm_id,
             submitted_at=submitted_at,
             status="SUBMITTED",
         )
@@ -56,6 +63,7 @@ class TradeRepository:
         trade_id: int,
         exit_ib_order_id: int,
         exit_submitted_at: datetime,
+        exit_perm_id: int | None = None,
     ) -> Trade:
         """Called by `record` when a SELL order closes an existing OPEN position.
 
@@ -69,6 +77,7 @@ class TradeRepository:
                 f"Trade {trade_id} cannot go PENDING_CLOSE from status={trade.status}"
             )
         trade.exit_ib_order_id = exit_ib_order_id
+        trade.exit_perm_id = exit_perm_id
         trade.exit_submitted_at = exit_submitted_at
         trade.status = "PENDING_CLOSE"
         self.session.commit()

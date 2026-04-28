@@ -66,20 +66,17 @@ class SchedulerConfig(BaseModel):
         return [d.lower() for d in v]
 
 
-class TrailingStopConfig(BaseModel):
-    enabled: bool = True
-    method: Literal["atr", "percentage"] = "atr"
-    atr_multiplier: float = Field(default=1.5, gt=0)
-    atr_period: int = Field(default=14, ge=2, le=100)
-    percentage: float = Field(default=3.0, gt=0, le=50)
-
-
 class RiskConfig(BaseModel):
-    max_risk_per_trade_pct: float = Field(default=1.0, gt=0, le=100)
-    max_open_positions: int = Field(default=5, ge=1, le=100)
-    max_portfolio_exposure_pct: float = Field(default=80.0, gt=0, le=100)
-    max_single_stock_pct: float = Field(default=20.0, gt=0, le=100)
-    trailing_stop: TrailingStopConfig = Field(default_factory=TrailingStopConfig)
+    """V2 risk config — fixed-% sizing with a hard cap on open positions.
+
+    Per locked spec (project_v2_next_sessions.md memory):
+    - 1.8% of net_liquidation per BUY
+    - 50 max open positions
+    - At cap = skip all new BUY signals that day; exits still run.
+    """
+
+    pct_per_position: float = Field(default=0.018, gt=0, le=1)
+    max_open_positions: int = Field(default=50, ge=1, le=100)
 
 
 class MACrossoverConfig(BaseModel):

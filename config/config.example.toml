@@ -42,17 +42,11 @@ oversold = 30
 overbought = 70
 
 [risk]
-max_risk_per_trade_pct = 1.0
-max_open_positions = 5
-max_portfolio_exposure_pct = 80.0
-max_single_stock_pct = 20.0
-
-[risk.trailing_stop]
-enabled = true
-method = "atr"                    # "atr" or "percentage"
-atr_multiplier = 1.5
-atr_period = 14
-percentage = 3.0
+# V2 sizing: each BUY = pct_per_position × net_liquidation, floor to whole shares.
+# Skip signal if 1 share already exceeds the target. Skip BUY phase entirely
+# at max_open_positions (exits still run).
+pct_per_position = 0.018          # 1.8% of net_liq per BUY
+max_open_positions = 50
 
 [telegram]
 enabled = false

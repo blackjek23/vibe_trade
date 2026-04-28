@@ -24,13 +24,12 @@ test_config.py,TestSchedulerConfig,test_invalid_time_format,Reject time formats 
 test_config.py,TestSchedulerConfig,test_invalid_time_values,Reject impossible times like 25:00
 test_config.py,TestSchedulerConfig,test_trading_days_validated,Trading days get lowercased (MON -> mon)
 test_config.py,TestSchedulerConfig,test_invalid_trading_day,Reject invalid day names like 'monday' — must be 3-letter abbreviation
-test_config.py,TestTrailingStopConfig,test_defaults,Verify defaults: method=atr atr_multiplier=1.5
-test_config.py,TestTrailingStopConfig,test_multiplier_must_be_positive,Reject zero or negative ATR multiplier
-test_config.py,TestTrailingStopConfig,test_percentage_bounds,Reject percentage outside 1-50 range
-test_config.py,TestRiskConfig,test_defaults,Verify defaults: max_risk=1.0% max_positions=5
-test_config.py,TestRiskConfig,test_rejects_negative_risk,Reject negative risk percentage
+test_config.py,TestRiskConfig,test_defaults_match_locked_v2_spec,Verify V2 defaults: pct_per_position=0.018 max_open_positions=50
+test_config.py,TestRiskConfig,test_rejects_zero_pct,Reject zero pct_per_position
+test_config.py,TestRiskConfig,test_rejects_pct_over_one,Reject pct_per_position above 1.0 (would be over 100%)
 test_config.py,TestRiskConfig,test_rejects_zero_positions,Reject zero max_open_positions
-test_config.py,TestRiskConfig,test_exposure_bounds,Reject portfolio exposure above 100%
+test_config.py,TestRiskConfig,test_rejects_excessive_positions,Reject max_open_positions above bound (200)
+test_config.py,TestRiskConfig,test_no_v1_trailing_stop_field,Regression guard: V1 trailing_stop field must not exist on V2 RiskConfig
 test_config.py,TestMACrossoverConfig,test_defaults,Verify defaults: fast_period=20 slow_period=50
 test_config.py,TestMACrossoverConfig,test_slow_must_be_greater_than_fast,Reject slow_period <= fast_period (e.g. fast=50 slow=20)
 test_config.py,TestMACrossoverConfig,test_equal_periods_rejected,Reject equal fast and slow periods
@@ -47,7 +46,9 @@ test_config.py,TestAppConfig,test_defaults,Verify all sub-configs wire up correc
 test_config.py,TestAppConfig,test_load_config_no_file,load_config() returns defaults when config file doesn't exist
 test_config.py,TestAppConfig,test_load_config_from_example,load_config() correctly loads from the example TOML file
 test_db.py,TestCreateSubmittedBuy,test_creates_row_with_submitted_status,V2: record-job inserts a SUBMITTED BUY with requested_quantity + ib_order_id + submitted_at
+test_db.py,TestCreateSubmittedBuy,test_stores_perm_id_when_provided,V2: create_submitted_buy accepts and stores perm_id (IB persistent ID for cross-process dedup)
 test_db.py,TestMarkPendingClose,test_happy_path,V2: record-job flips an OPEN trade to PENDING_CLOSE with exit_ib_order_id + exit_submitted_at
+test_db.py,TestMarkPendingClose,test_stores_exit_perm_id_when_provided,V2: mark_pending_close accepts and stores exit_perm_id (IB persistent ID for cross-process dedup)
 test_db.py,TestMarkPendingClose,test_rejects_non_open_status,V2: can't go PENDING_CLOSE from SUBMITTED — ValueError
 test_db.py,TestConfirmBuyFill,test_full_fill,V2: reconcile sets SUBMITTED BUY → OPEN with entry_price + filled_quantity + entry_time
 test_db.py,TestConfirmBuyFill,test_partial_fill,V2: SUBMITTED BUY → PARTIALLY_FILLED when IB fills only part of requested qty
@@ -76,7 +77,8 @@ test_db.py,TestScanLogRepository,test_complete_scan_success,Start then complete 
 test_db.py,TestScanLogRepository,test_complete_scan_with_errors,Complete with errors list — verify status=FAILED errors stored as JSON
 test_db.py,TestEngine,test_init_db_creates_tables,Call init_db with temp path — verify trades signals daily_pnl portfolio_snapshot scan_log tables exist
 test_db.py,TestEngine,test_get_session_factory_without_init,Call get_session_factory() with no init and no path — expect RuntimeError
-test_db.py,TestTradeModel,test_has_v2_columns,V2: Trade table has submitted_at exit_submitted_at exit_ib_order_id requested_quantity filled_quantity columns AND no legacy 'quantity' or 'trailing_stop' columns
+test_db.py,TestTradeModel,test_has_v2_columns,V2: Trade table has submitted_at exit_submitted_at exit_ib_order_id requested_quantity filled_quantity perm_id exit_perm_id columns AND no legacy 'quantity' or 'trailing_stop' columns
+test_db.py,TestTradeModel,test_perm_id_is_indexed,V2: perm_id and exit_perm_id are indexed for fast cross-process dedup lookup
 test_broker.py,TestIBBrokerConnectRetry,test_connect_succeeds_first_try,Happy path — connectAsync succeeds on first call no retry needed
 test_broker.py,TestIBBrokerConnectRetry,test_connect_retries_then_succeeds,Fail twice then succeed — verify 3 total calls made
 test_broker.py,TestIBBrokerConnectRetry,test_connect_exhausts_retries_and_raises,All attempts fail — verify original exception propagates after max_attempts
@@ -91,3 +93,28 @@ test_universe.py,TestUniverseUniqueness,test_sp500_list_has_no_duplicates,SP500_
 test_universe.py,TestUniverseUniqueness,test_load_universe_sp500_is_unique,load_universe(sp500) returns unique symbols — no dup scan passes
 test_universe.py,TestUniverseUniqueness,test_load_universe_custom_dedupes_input,Custom universe with duplicate entries is deduplicated on load
 test_universe.py,TestUniverseUniqueness,test_load_universe_custom_empty,Empty custom_symbols returns [] (not an error)
+test_position_sizer.py,TestHappyPath,test_typical_sizing_at_default_pct,V2: $100K * 1.8% / $50 = 36 shares (cents-based to defeat float imprecision)
+test_position_sizer.py,TestHappyPath,test_floors_to_whole_share,V2: $1800/$77 = 23.37 floors to 23 (no fractional shares)
+test_position_sizer.py,TestHappyPath,test_uses_net_liq_not_cash,V2: $95381 * 1.8% / $26.09 = 65 shares (real-world numbers)
+test_position_sizer.py,TestPositionCap,test_at_cap_returns_zero,V2: 50 positions held = skip BUY (returns 0)
+test_position_sizer.py,TestPositionCap,test_one_below_cap_returns_normally,V2: 49 positions held still allows BUY
+test_position_sizer.py,TestPositionCap,test_above_cap_returns_zero,V2: defensive — even if position count exceeded cap somehow returns 0
+test_position_sizer.py,TestPositionCap,test_custom_cap_respected,V2: explicit max_positions=30 enforced over default 50
+test_position_sizer.py,TestOneShareTooBig,test_skips_when_share_exceeds_target,V2: BRK.A-style ($700K/share) > 1.8% target = skip
+test_position_sizer.py,TestOneShareTooBig,test_share_exactly_at_target_returns_one,V2: price == target_dollars exactly = 1 share (boundary)
+test_position_sizer.py,TestOneShareTooBig,test_share_one_dollar_over_target_skips,V2: price $1 above target = skip
+test_position_sizer.py,TestDefensiveInputs,test_zero_net_liq_returns_zero,V2: zero net_liq returns 0 (defensive)
+test_position_sizer.py,TestDefensiveInputs,test_negative_net_liq_returns_zero,V2: negative net_liq returns 0 (defensive)
+test_position_sizer.py,TestDefensiveInputs,test_zero_price_returns_zero,V2: zero price returns 0 (defensive)
+test_position_sizer.py,TestDefensiveInputs,test_negative_price_returns_zero,V2: negative price returns 0 (defensive)
+test_position_sizer.py,TestCustomPct,test_explicit_pct_overrides_default,V2: explicit pct_per_position=0.025 overrides 0.018 default
+test_position_sizer.py,TestCustomPct,test_pct_default_matches_locked_spec,Regression guard: DEFAULT_PCT_PER_POSITION=0.018 DEFAULT_MAX_POSITIONS=50
+test_risk_manager.py,TestCanOpenNewPosition,test_under_cap_approves,V2: 10/50 positions = approved
+test_risk_manager.py,TestCanOpenNewPosition,test_at_cap_rejects,V2: 50/50 positions = rejected (skip BUY phase)
+test_risk_manager.py,TestCanOpenNewPosition,test_over_cap_rejects,V2: 75/50 defensive = rejected
+test_risk_manager.py,TestCanOpenNewPosition,test_zero_qty_positions_dont_count,V2: lingering qty=0 positions don't count toward cap
+test_risk_manager.py,TestCanOpenNewPosition,test_empty_positions_approves,V2: zero held = approved
+test_risk_manager.py,TestCanTradeSymbol,test_new_symbol_approved,V2: new symbol with other holdings = approved
+test_risk_manager.py,TestCanTradeSymbol,test_already_holding_rejected,V2: already hold AAPL = rejected (no averaging)
+test_risk_manager.py,TestCanTradeSymbol,test_zero_qty_holding_doesnt_block,V2: lingering AAPL with qty=0 doesn't block re-buy
+test_risk_manager.py,TestCanTradeSymbol,test_empty_positions_approved,V2: nothing held = approved

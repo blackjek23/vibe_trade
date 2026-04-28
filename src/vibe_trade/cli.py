@@ -99,29 +99,29 @@ def status(
         table.add_column("Side")
         table.add_column("Qty", justify="right")
         table.add_column("Entry", justify="right")
-        table.add_column("Trail Stop", justify="right")
         table.add_column("Strategy")
 
         for t in open_trades:
+            qty = t.filled_quantity if t.filled_quantity is not None else t.requested_quantity
             table.add_row(
                 t.symbol,
                 t.side,
-                str(t.quantity),
+                str(qty),
                 f"${t.entry_price:.2f}" if t.entry_price else "-",
-                f"${t.trailing_stop:.2f}" if t.trailing_stop else "-",
                 t.strategy_name,
             )
         console.print(table)
     else:
         console.print("[dim]No open positions[/dim]")
 
-    # Today's P&L
+    # Today's P&L (V2: total = realized + unrealized; total_pnl column was removed)
     from vibe_trade.db.models import DailyPnL as DailyPnLModel
     today_pnl = session.query(DailyPnLModel).filter_by(date=date.today()).first()
     if today_pnl:
-        color = "green" if today_pnl.total_pnl >= 0 else "red"
+        total = (today_pnl.realized_pnl or 0.0) + (today_pnl.unrealized_pnl or 0.0)
+        color = "green" if total >= 0 else "red"
         console.print(
-            f"\nToday's P&L: [{color}]${today_pnl.total_pnl:,.2f}[/{color}] | "
+            f"\nToday's P&L: [{color}]${total:,.2f}[/{color}] | "
             f"Account: ${today_pnl.account_value:,.2f}"
         )
 
@@ -163,10 +163,11 @@ def trades(
             color = "green" if t.pnl >= 0 else "red"
             pnl_str = f"[{color}]${t.pnl:,.2f}[/{color}]"
 
+        qty = t.filled_quantity if t.filled_quantity is not None else t.requested_quantity
         table.add_row(
             t.symbol,
             t.side,
-            str(t.quantity),
+            str(qty),
             f"${t.entry_price:.2f}" if t.entry_price else "-",
             f"${t.exit_price:.2f}" if t.exit_price else "-",
             pnl_str or "-",

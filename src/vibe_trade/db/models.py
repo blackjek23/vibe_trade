@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, date
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -39,13 +40,15 @@ class Trade(Base):
     entry_price: Mapped[float | None] = mapped_column(Float)  # filled at submit-time=None
     entry_time: Mapped[datetime | None] = mapped_column(DateTime)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime)  # when BUY was sent to IB
-    ib_order_id: Mapped[int | None] = mapped_column(Integer)  # BUY order id
+    ib_order_id: Mapped[int | None] = mapped_column(Integer)  # BUY orderId — session-scoped, resets on reconnect
+    perm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # IB persistent ID for BUY — survives reconnect; cross-process dedup target
 
     # Exit (SELL side)
     exit_price: Mapped[float | None] = mapped_column(Float)
     exit_time: Mapped[datetime | None] = mapped_column(DateTime)
     exit_submitted_at: Mapped[datetime | None] = mapped_column(DateTime)  # when SELL was sent
-    exit_ib_order_id: Mapped[int | None] = mapped_column(Integer)  # SELL order id
+    exit_ib_order_id: Mapped[int | None] = mapped_column(Integer)  # SELL orderId — session-scoped
+    exit_perm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # IB persistent ID for SELL
 
     # Quantities — requested is what we asked for; filled is what actually executed.
     requested_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
