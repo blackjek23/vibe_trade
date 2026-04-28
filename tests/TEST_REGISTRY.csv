@@ -30,18 +30,6 @@ test_config.py,TestRiskConfig,test_rejects_pct_over_one,Reject pct_per_position 
 test_config.py,TestRiskConfig,test_rejects_zero_positions,Reject zero max_open_positions
 test_config.py,TestRiskConfig,test_rejects_excessive_positions,Reject max_open_positions above bound (200)
 test_config.py,TestRiskConfig,test_no_v1_trailing_stop_field,Regression guard: V1 trailing_stop field must not exist on V2 RiskConfig
-test_config.py,TestMACrossoverConfig,test_defaults,Verify defaults: fast_period=20 slow_period=50
-test_config.py,TestMACrossoverConfig,test_slow_must_be_greater_than_fast,Reject slow_period <= fast_period (e.g. fast=50 slow=20)
-test_config.py,TestMACrossoverConfig,test_equal_periods_rejected,Reject equal fast and slow periods
-test_config.py,TestMACrossoverConfig,test_period_bounds,Reject fast_period below minimum (< 2)
-test_config.py,TestRSIMeanRevertConfig,test_defaults,Verify defaults: oversold=30 overbought=70
-test_config.py,TestRSIMeanRevertConfig,test_swapped_values_rejected,Reject swapped thresholds (oversold=70 overbought=30)
-test_config.py,TestRSIMeanRevertConfig,test_oversold_bounds,Reject oversold outside 1-49 range
-test_config.py,TestRSIMeanRevertConfig,test_overbought_bounds,Reject overbought outside 51-99 range
-test_config.py,TestStrategyConfig,test_defaults,Verify defaults: active=['ma_crossover'] timeframe='1h'
-test_config.py,TestStrategyConfig,test_rejects_invalid_timeframe,Reject unsupported timeframes like '5m'
-test_config.py,TestStrategyConfig,test_rejects_empty_active,Reject empty active strategy list — at least one required
-test_config.py,TestStrategyConfig,test_valid_timeframes,Accept all valid timeframes: 1h 4h 1d
 test_config.py,TestAppConfig,test_defaults,Verify all sub-configs wire up correctly with defaults
 test_config.py,TestAppConfig,test_load_config_no_file,load_config() returns defaults when config file doesn't exist
 test_config.py,TestAppConfig,test_load_config_from_example,load_config() correctly loads from the example TOML file

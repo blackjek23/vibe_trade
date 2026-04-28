@@ -13,10 +13,8 @@ from rich.table import Table
 
 from vibe_trade.config import load_config
 from vibe_trade.db.engine import init_db
-from vibe_trade.notify.console import ConsoleNotifier
-from vibe_trade.strategy.registry import load_strategies
 
-app = typer.Typer(name="vibe-trade", help="Vibe Trade — Stock Trading Bot")
+app = typer.Typer(name="vibe-trade", help="Vibe Trade -- Stock Trading Bot")
 console = Console()
 
 
@@ -28,14 +26,6 @@ def _setup_logging(level: str, log_file: str | None = None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_file))
     logging.basicConfig(level=getattr(logging, level, logging.INFO), format=fmt, handlers=handlers)
-
-
-def _get_notifier(config):
-    """Get the appropriate notifier based on config."""
-    if config.telegram.enabled:
-        from vibe_trade.notify.telegram import TelegramNotifier
-        return TelegramNotifier(config.telegram)
-    return ConsoleNotifier()
 
 
 @app.command()
@@ -266,44 +256,6 @@ async def _run_reconcile_cli(config) -> None:
         console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
         for e in result.errors[:10]:
             console.print(f"  - {e}")
-
-
-@app.command()
-def scan(
-    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
-) -> None:
-    """Run a single scan cycle."""
-    config = load_config(config_path)
-    _setup_logging(config.general.log_level, config.general.log_file)
-    init_db(config.general.db_path)
-
-    strategies = load_strategies(config.strategy)
-    notifier = _get_notifier(config)
-
-    console.print(f"[bold]Running scan cycle[/bold] (mode={config.general.mode})")
-    from vibe_trade.scanner import run_scan_cycle
-    asyncio.run(run_scan_cycle(config, strategies, notifier))
-    console.print("[green]Scan complete[/green]")
-
-
-@app.command()
-def start(
-    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
-) -> None:
-    """Start the scheduler for periodic scans."""
-    config = load_config(config_path)
-    _setup_logging(config.general.log_level, config.general.log_file)
-    init_db(config.general.db_path)
-
-    strategies = load_strategies(config.strategy)
-    notifier = _get_notifier(config)
-
-    console.print(
-        f"[bold]Starting scheduler[/bold] — "
-        f"every {config.scheduler.interval_minutes}min during market hours"
-    )
-    from vibe_trade.scheduler import start_scheduler
-    start_scheduler(config, strategies, notifier)
 
 
 @app.command()

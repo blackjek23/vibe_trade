@@ -21,7 +21,6 @@ class SignalResult:
     symbol: str
     strategy_name: str
     confidence: float = 0.0  # 0 to 1
-    trailing_stop_price: float | None = None
     metadata: dict = field(default_factory=dict)
 
 

@@ -20,6 +20,8 @@ source = "sp500"                  # "sp500" or "custom"
 custom_symbols = []               # used when source = "custom"
 
 [scheduler]
+# V2 uses OS cron for scheduling; in-process scheduler retained as a config
+# section for future use but not active in V2 jobs (submit/record/reconcile).
 enabled = true
 interval_minutes = 60
 market_open = "09:30"
@@ -27,19 +29,8 @@ market_close = "16:00"
 timezone = "US/Eastern"
 trading_days = ["mon", "tue", "wed", "thu", "fri"]
 
-[strategy]
-active = ["ma_crossover"]
-timeframe = "1h"                  # "1h", "4h", "1d"
-lookback_days = 60
-
-[strategy.ma_crossover]
-fast_period = 20
-slow_period = 50
-
-[strategy.rsi_mean_revert]
-rsi_period = 14
-oversold = 30
-overbought = 70
+# V2 first iteration: single hardcoded strategy (Donchian, N=20). When a
+# second strategy lands, restore a [strategy] section here.
 
 [risk]
 # V2 sizing: each BUY = pct_per_position × net_liquidation, floor to whole shares.

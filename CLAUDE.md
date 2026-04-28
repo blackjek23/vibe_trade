@@ -33,11 +33,13 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-- **Day 2 + 3** (V1 DB + broker): complete.
-- **Session A** (V2 DB schema + repo): complete — Trade V2 columns, PortfolioSnapshot model, extended DailyPnL. Legacy `quantity`, V1 `trailing_stop`, redundant `total_pnl` removed. 92 tests total (31 DB).
-- **Live paper scratches:** 7 scripts in `scratches/` covering every IB↔DB shape for submit/record/reconcile — see scripts list below.
-- **Next:** Session B (broker: `get_order_status` for reconcile) then Session C (`submit` job).
-- **V1 scanner/risk/orders:** still present under `src/vibe_trade/`, now broken at runtime (they reference removed `trailing_stop` / `quantity`). To be deleted in Session E.
+V2 implementation complete. Sessions A → E all landed.
+
+- **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done. 164 tests passing.
+- **Strategy:** Donchian channel breakout, N=20, symmetric, excluding the bar being evaluated. Single strategy for first iteration; locked in `src/vibe_trade/strategy/examples/donchian.py`.
+- **Sizing:** 1.8% of net_liquidation per BUY, 50-position cap, floor to whole shares (cents-based arithmetic to defeat float imprecision).
+- **Client IDs:** submit=1, record=2, reconcile=3 (constants in `jobs/submit.py`).
+- **Cross-process state:** record + reconcile drive from `ib.fills()` (intact across processes), with `permId` as the dedup key (`ib.trades().order` fields reset to 0 on reconnect).
 
 ## Project layout
 
@@ -47,18 +49,17 @@ src/vibe_trade/
 ├── config.py      # pydantic config models + load_config
 ├── data/          # yfinance provider, S&P 500 universe loader
 ├── db/            # SQLAlchemy models, repositories, engine
-├── notify/        # Telegram + console notifiers
-├── orders/        # OrderExecutor (translates signals → broker orders)
-├── risk/          # RiskManager, position sizer, trailing stops
-├── scheduler/     # APScheduler (to be simplified/removed in V2)
-├── strategy/      # BaseStrategy, ma_crossover, rsi_mean_revert, indicators
-├── scanner.py     # V1 orchestrator (delete in Session E)
-└── cli.py         # typer commands
+├── jobs/          # V2 jobs: submit.py, record.py, reconcile.py
+├── notify/        # Telegram + console notifiers (used by panic command)
+├── risk/          # manager.py, position_sizer.py, panic.py
+├── strategy/      # base.py, examples/donchian.py
+└── cli.py         # typer commands: submit, record, reconcile, status, trades, config-check, panic
 
 tests/
 ├── TEST_REGISTRY.csv    # central list of all tests (update after every change)
 ├── conftest.py
-├── test_broker.py, test_config.py, test_db.py, test_universe.py
+└── test_broker.py, test_config.py, test_db.py, test_donchian.py, test_position_sizer.py,
+    test_reconcile.py, test_record.py, test_risk_manager.py, test_submit.py, test_universe.py
 
 docs/
 └── ARCHITECTURE_V2.md   # full plan for the three-phase refactor
@@ -94,8 +95,11 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 .venv/Scripts/python scratches/scratch_positions.py       # data-pull, safe anytime
 .venv/Scripts/python scratches/scratch_reconcile.py       # writes to data/test_paper.db
 
-# CLI (V1 only for now; V2 commands land in Sessions C/D)
-.venv/Scripts/python -m vibe_trade.cli --help
+# V2 CLI (paper or live per config.toml mode)
+.venv/Scripts/python -m vibe_trade --help
+.venv/Scripts/python -m vibe_trade submit       # 16:00 — exits then entries
+.venv/Scripts/python -m vibe_trade record       # 16:25 — persist today's fills
+.venv/Scripts/python -m vibe_trade reconcile    # 23:30 — finalize statuses + snapshot
 ```
 
 ## Communication style

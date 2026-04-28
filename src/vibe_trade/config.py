@@ -79,57 +79,7 @@ class RiskConfig(BaseModel):
     max_open_positions: int = Field(default=50, ge=1, le=100)
 
 
-class MACrossoverConfig(BaseModel):
-    fast_period: int = Field(default=20, ge=2, le=500)
-    slow_period: int = Field(default=50, ge=2, le=500)
-
-    @field_validator("slow_period")
-    @classmethod
-    def slow_gt_fast(cls, v: int, info) -> int:
-        fast = info.data.get("fast_period")
-        if fast is not None and v <= fast:
-            raise ValueError(f"slow_period ({v}) must be greater than fast_period ({fast})")
-        return v
-
-
-class RSIMeanRevertConfig(BaseModel):
-    rsi_period: int = Field(default=14, ge=2, le=100)
-    oversold: int = Field(default=30, ge=1, le=49)
-    overbought: int = Field(default=70, ge=51, le=99)
-
-    @field_validator("overbought")
-    @classmethod
-    def overbought_gt_oversold(cls, v: int, info) -> int:
-        oversold = info.data.get("oversold")
-        if oversold is not None and v <= oversold:
-            raise ValueError(f"overbought ({v}) must be greater than oversold ({oversold})")
-        return v
-
-
-VALID_TIMEFRAMES = {"1h", "4h", "1d"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-
-
-class StrategyConfig(BaseModel):
-    active: list[str] = Field(default_factory=lambda: ["ma_crossover"])
-    timeframe: str = "1h"
-    lookback_days: int = Field(default=60, ge=1, le=365)
-    ma_crossover: MACrossoverConfig = Field(default_factory=MACrossoverConfig)
-    rsi_mean_revert: RSIMeanRevertConfig = Field(default_factory=RSIMeanRevertConfig)
-
-    @field_validator("timeframe")
-    @classmethod
-    def validate_timeframe(cls, v: str) -> str:
-        if v not in VALID_TIMEFRAMES:
-            raise ValueError(f"Invalid timeframe '{v}'. Must be one of {VALID_TIMEFRAMES}")
-        return v
-
-    @field_validator("active")
-    @classmethod
-    def validate_not_empty(cls, v: list[str]) -> list[str]:
-        if not v:
-            raise ValueError("At least one strategy must be active")
-        return v
 
 
 class TelegramConfig(BaseModel):
@@ -168,7 +118,6 @@ class AppConfig(BaseSettings):
     broker: BrokerConfig = Field(default_factory=BrokerConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
-    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
 

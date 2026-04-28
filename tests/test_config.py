@@ -9,11 +9,8 @@ from vibe_trade.config import (
     AppConfig,
     BrokerConfig,
     GeneralConfig,
-    MACrossoverConfig,
-    RSIMeanRevertConfig,
     RiskConfig,
     SchedulerConfig,
-    StrategyConfig,
     UniverseConfig,
     load_config,
 )
@@ -170,69 +167,6 @@ class TestRiskConfig:
         assert not hasattr(c, "trailing_stop")
 
 
-class TestMACrossoverConfig:
-    def test_defaults(self):
-        c = MACrossoverConfig()
-        assert c.fast_period == 20
-        assert c.slow_period == 50
-
-    def test_slow_must_be_greater_than_fast(self):
-        with pytest.raises(ValidationError, match="slow_period.*must be greater"):
-            MACrossoverConfig(fast_period=50, slow_period=20)
-
-    def test_equal_periods_rejected(self):
-        with pytest.raises(ValidationError):
-            MACrossoverConfig(fast_period=20, slow_period=20)
-
-    def test_period_bounds(self):
-        with pytest.raises(ValidationError):
-            MACrossoverConfig(fast_period=1)
-
-
-class TestRSIMeanRevertConfig:
-    def test_defaults(self):
-        c = RSIMeanRevertConfig()
-        assert c.oversold == 30
-        assert c.overbought == 70
-
-    def test_swapped_values_rejected(self):
-        # Bounds enforce oversold <= 49 and overbought >= 51, so swapped values fail
-        with pytest.raises(ValidationError):
-            RSIMeanRevertConfig(oversold=70, overbought=30)
-
-    def test_oversold_bounds(self):
-        with pytest.raises(ValidationError):
-            RSIMeanRevertConfig(oversold=0)
-        with pytest.raises(ValidationError):
-            RSIMeanRevertConfig(oversold=50)
-
-    def test_overbought_bounds(self):
-        with pytest.raises(ValidationError):
-            RSIMeanRevertConfig(overbought=50)
-        with pytest.raises(ValidationError):
-            RSIMeanRevertConfig(overbought=100)
-
-
-class TestStrategyConfig:
-    def test_defaults(self):
-        c = StrategyConfig()
-        assert c.active == ["ma_crossover"]
-        assert c.timeframe == "1h"
-
-    def test_rejects_invalid_timeframe(self):
-        with pytest.raises(ValidationError, match="Invalid timeframe"):
-            StrategyConfig(timeframe="5m")
-
-    def test_rejects_empty_active(self):
-        with pytest.raises(ValidationError, match="At least one strategy"):
-            StrategyConfig(active=[])
-
-    def test_valid_timeframes(self):
-        for tf in ("1h", "4h", "1d"):
-            c = StrategyConfig(timeframe=tf)
-            assert c.timeframe == tf
-
-
 class TestAppConfig:
     def test_defaults(self):
         c = AppConfig()
@@ -253,4 +187,5 @@ class TestAppConfig:
         shutil.copy(src, dst)
         c = load_config(str(dst))
         assert c.general.mode == "paper"
-        assert c.strategy.active == ["ma_crossover"]
+        assert c.risk.pct_per_position == 0.018
+        assert c.risk.max_open_positions == 50
