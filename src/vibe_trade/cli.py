@@ -39,6 +39,107 @@ def _get_notifier(config):
 
 
 @app.command()
+def submit(
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """V2 submit job (16:00 Asia/Jerusalem).
+
+    Exits phase: SELL signals on held positions.
+    Entries phase: BUY signals on universe minus held tickers.
+    Places market orders, NO DB writes (record at 16:25 handles persistence).
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    asyncio.run(_run_submit_cli(config))
+
+
+async def _run_submit_cli(config) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.data.provider import DataProvider
+    from vibe_trade.data.universe import load_universe
+    from vibe_trade.jobs.submit import SUBMIT_CLIENT_ID, run_submit
+    from vibe_trade.risk.manager import RiskManager
+    from vibe_trade.strategy.examples.donchian import DonchianStrategy
+
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = SUBMIT_CLIENT_ID
+
+    broker = IBBroker(broker_config, mode=config.general.mode)
+    universe = load_universe(config.universe)
+
+    console.print(
+        f"[bold]Submit[/bold] mode={config.general.mode} "
+        f"client_id={SUBMIT_CLIENT_ID} universe_size={len(universe)}"
+    )
+    console.print(
+        f"Connecting to {broker_config.host}:"
+        f"{broker_config.get_port(config.general.mode)}..."
+    )
+
+    await broker.connect()
+    try:
+        result = await run_submit(
+            broker=broker,
+            strategy=DonchianStrategy(),
+            data_provider=DataProvider(),
+            risk_manager=RiskManager(config.risk),
+            universe=universe,
+            pct_per_position=config.risk.pct_per_position,
+            max_positions=config.risk.max_open_positions,
+        )
+    finally:
+        await broker.disconnect()
+
+    _print_submit_summary(result)
+
+
+def _print_submit_summary(result) -> None:
+    """Render a SubmitResult to the console as a tidy table."""
+    console.print(
+        f"\n[dim]universe={result.universe_size}  held={result.held_count}[/dim]"
+    )
+
+    table = Table(title="Submit Result")
+    table.add_column("Phase", style="cyan")
+    table.add_column("Evaluated", justify="right")
+    table.add_column("Signaled", justify="right")
+    table.add_column("Placed", justify="right", style="green")
+    table.add_column("Failed", justify="right", style="red")
+    table.add_row(
+        "Exits",
+        str(result.exits_evaluated),
+        str(result.exits_signaled),
+        str(result.exits_placed),
+        str(result.exits_failed),
+    )
+    if not result.entries_phase_skipped:
+        table.add_row(
+            "Entries",
+            str(result.entries_evaluated),
+            str(result.entries_signaled),
+            str(result.entries_placed),
+            str(result.entries_failed),
+        )
+    console.print(table)
+
+    if result.entries_phase_skipped:
+        console.print(
+            f"[yellow]Entries phase skipped: {result.cap_reason}[/yellow]"
+        )
+    if result.entries_skipped_sizing > 0:
+        console.print(
+            f"[dim]{result.entries_skipped_sizing} BUY signal(s) skipped by sizer "
+            f"(at cap or 1 share > target)[/dim]"
+        )
+    if result.errors:
+        console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
+        for e in result.errors[:10]:
+            console.print(f"  - {e}")
+        if len(result.errors) > 10:
+            console.print(f"  ... and {len(result.errors) - 10} more")
+
+
+@app.command()
 def scan(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
 ) -> None:

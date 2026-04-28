@@ -1,0 +1,217 @@
+"""V2 submit job — runs at 16:00 Asia/Jerusalem, places market orders.
+
+Flow (locked by docs/ARCHITECTURE_V2.md and project_v2_next_sessions.md memory):
+1. Connect with client_id = SUBMIT_CLIENT_ID (1)
+2. Pull account + positions from IB (source of truth, NOT the DB)
+3. Exits phase: for each long position, evaluate strategy on yesterday's
+   daily bar; if SELL, place a market sell at the held quantity.
+4. Entries phase: if not at the position cap, iterate the S&P 500 universe
+   minus held tickers; for each universe ticker, evaluate strategy; if BUY,
+   size the position via `position_sizer.size_position(...)`; if shares > 0,
+   place a market buy.
+5. Disconnect.
+
+Invariants:
+- NO DB writes (V2 separation: record at 16:25 does the DB part).
+- NO trailing stops, no risk-per-share math — sizing is purely % of net_liq.
+- Single strategy for first iteration (Donchian, locked).
+- Held tickers are skipped in entries phase (no averaging).
+
+The function is broker-agnostic for testability — pass any object that
+satisfies the BaseBroker interface. The CLI command (Step 3) handles the
+real-IB connection lifecycle around `run_submit`.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+
+from vibe_trade.broker.base import BaseBroker
+from vibe_trade.broker.models import OrderRequest
+from vibe_trade.data.provider import DataProvider
+from vibe_trade.risk.manager import RiskManager
+from vibe_trade.risk.position_sizer import (
+    DEFAULT_MAX_POSITIONS,
+    DEFAULT_PCT_PER_POSITION,
+    size_position,
+)
+from vibe_trade.strategy.base import BaseStrategy, SignalType
+
+logger = logging.getLogger(__name__)
+
+# Hardcoded client IDs per V2 design (memory: project_v2_next_sessions.md).
+# fill.execution.clientId reveals which phase placed each order.
+SUBMIT_CLIENT_ID: int = 1
+RECORD_CLIENT_ID: int = 2
+RECONCILE_CLIENT_ID: int = 3
+
+# Daily-bar lookback for yfinance: Donchian needs N+1 bars, but yfinance
+# returns trading days within a calendar period. 60 calendar days yields
+# ~42 trading days, comfortable margin over the 21 we need.
+DEFAULT_LOOKBACK_DAYS: int = 60
+
+
+@dataclass
+class SubmitResult:
+    universe_size: int = 0
+    held_count: int = 0
+
+    # Exits (positions we held and evaluated)
+    exits_evaluated: int = 0   # positions we ran the strategy on
+    exits_signaled: int = 0    # SELL signals returned
+    exits_placed: int = 0      # SELL orders accepted by IB
+    exits_failed: int = 0      # exceptions during exit handling
+
+    # Entries (universe tickers we evaluated)
+    entries_evaluated: int = 0       # universe tickers we ran the strategy on
+    entries_signaled: int = 0        # BUY signals returned
+    entries_placed: int = 0          # BUY orders accepted by IB
+    entries_skipped_sizing: int = 0  # BUY signaled but sizer returned 0
+    entries_failed: int = 0          # exceptions during entry handling
+
+    entries_phase_skipped: bool = False  # True if at position cap
+    cap_reason: str = ""
+
+    errors: list[str] = field(default_factory=list)
+
+
+async def run_submit(
+    *,
+    broker: BaseBroker,
+    strategy: BaseStrategy,
+    data_provider: DataProvider,
+    risk_manager: RiskManager,
+    universe: list[str],
+    pct_per_position: float = DEFAULT_PCT_PER_POSITION,
+    max_positions: int = DEFAULT_MAX_POSITIONS,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+) -> SubmitResult:
+    """Execute one submit cycle. Caller manages the broker connection.
+
+    Returns a SubmitResult counting what happened. Per-symbol exceptions are
+    logged and recorded but never abort the run -- one bad ticker shouldn't
+    take down the whole submit.
+    """
+    result = SubmitResult()
+
+    account = await broker.get_account_summary()
+    positions = await broker.get_positions()
+
+    # Long positions only (quantity > 0). Shorts aren't part of V2 first iter.
+    longs = [p for p in positions if p.quantity > 0]
+    held_symbols: set[str] = {p.symbol for p in longs}
+    result.universe_size = len(universe)
+    result.held_count = len(longs)
+
+    logger.info(
+        "submit start: %d held, $%.2f net_liq, universe=%d, strategy=%s",
+        len(longs), account.net_liquidation, len(universe), strategy.name,
+    )
+
+    # ----------------------------------------------------------------- exits
+    for pos in longs:
+        result.exits_evaluated += 1
+        try:
+            candles = await data_provider.get_candles(
+                pos.symbol, timeframe="1d", lookback_days=lookback_days
+            )
+            if len(candles) < strategy.required_candles:
+                logger.warning(
+                    "exit %s: only %d candles (need %d) -- holding",
+                    pos.symbol, len(candles), strategy.required_candles,
+                )
+                continue
+
+            sig = strategy.evaluate(pos.symbol, candles)
+            if sig.signal != SignalType.SELL:
+                continue
+
+            result.exits_signaled += 1
+            logger.info("SELL signal: %s (qty=%d)", pos.symbol, pos.quantity)
+
+            order_result = await broker.place_market_order(
+                OrderRequest(symbol=pos.symbol, side="SELL", quantity=pos.quantity)
+            )
+            if order_result.status in ("FILLED", "SUBMITTED"):
+                result.exits_placed += 1
+            else:
+                result.exits_failed += 1
+                result.errors.append(
+                    f"exit {pos.symbol}: order status={order_result.status} "
+                    f"err={order_result.error_message}"
+                )
+        except Exception as exc:  # noqa: BLE001 -- intentional broad catch
+            result.exits_failed += 1
+            err = f"exit {pos.symbol}: {exc!r}"
+            logger.exception(err)
+            result.errors.append(err)
+
+    # --------------------------------------------------------------- entries
+    cap_check = risk_manager.can_open_new_position(positions)
+    if not cap_check.approved:
+        result.entries_phase_skipped = True
+        result.cap_reason = cap_check.reason
+        logger.info("entries phase skipped: %s", cap_check.reason)
+        return result
+
+    # Track positions we've added during this run so the sizer's cap stays
+    # honest as we place BUYs (orders placed but not yet filled still count).
+    placed_this_run = 0
+
+    for symbol in universe:
+        if symbol in held_symbols:
+            continue
+
+        result.entries_evaluated += 1
+        try:
+            candles = await data_provider.get_candles(
+                symbol, timeframe="1d", lookback_days=lookback_days
+            )
+            if len(candles) < strategy.required_candles:
+                continue
+
+            sig = strategy.evaluate(symbol, candles)
+            if sig.signal != SignalType.BUY:
+                continue
+
+            result.entries_signaled += 1
+
+            price = float(candles["close"].iloc[-1])
+            current_count = len(longs) + placed_this_run
+            shares = size_position(
+                net_liquidation=account.net_liquidation,
+                price=price,
+                current_position_count=current_count,
+                pct_per_position=pct_per_position,
+                max_positions=max_positions,
+            )
+            if shares <= 0:
+                result.entries_skipped_sizing += 1
+                logger.info(
+                    "BUY %s skipped by sizer: price=$%.2f count=%d",
+                    symbol, price, current_count,
+                )
+                continue
+
+            logger.info("BUY signal: %s shares=%d price=$%.2f", symbol, shares, price)
+            order_result = await broker.place_market_order(
+                OrderRequest(symbol=symbol, side="BUY", quantity=shares)
+            )
+            if order_result.status in ("FILLED", "SUBMITTED"):
+                result.entries_placed += 1
+                placed_this_run += 1
+                held_symbols.add(symbol)
+            else:
+                result.entries_failed += 1
+                result.errors.append(
+                    f"entry {symbol}: order status={order_result.status} "
+                    f"err={order_result.error_message}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            result.entries_failed += 1
+            err = f"entry {symbol}: {exc!r}"
+            logger.exception(err)
+            result.errors.append(err)
+
+    return result
