@@ -163,3 +163,40 @@ test_reconcile.py,TestPortfolioSnapshot,test_writes_snapshot_for_each_position,O
 test_reconcile.py,TestPortfolioSnapshot,test_snapshot_idempotent_on_rerun,Re-running reconcile keeps exactly 1 snapshot row per date (delete-then-insert)
 test_reconcile.py,TestDailyPnL,test_upserts_with_real_counts,daily_pnl row has trades_opened/closed real counts plus account fields
 test_reconcile.py,TestRobustness,test_per_trade_exception_doesnt_abort,Malformed fill on one trade -> recorded other trades still process
+test_backtest_data.py,TestFetchAndCacheBars,test_fetches_and_writes_per_symbol,fetch_and_cache_bars writes one CSV per symbol via injected fetcher
+test_backtest_data.py,TestFetchAndCacheBars,test_reuses_cache_on_subsequent_call,Second call hits cache no fetcher invocation
+test_backtest_data.py,TestFetchAndCacheBars,test_force_refresh_re_fetches,force_refresh=True re-fetches even when cache exists
+test_backtest_data.py,TestFetchAndCacheBars,test_empty_data_skips_cache_write,Empty fetch result -> no CSV written symbol omitted from result map
+test_backtest_data.py,TestLoadBars,test_loads_cached_bars,load_bars reads CSV with date index and OHLCV columns
+test_backtest_data.py,TestLoadBars,test_missing_returns_empty,Missing symbol cache -> empty DataFrame (defensive)
+test_backtest_data.py,TestLoadBars,test_slice_by_date_range,start/end params slice the loaded DataFrame inclusively/exclusively
+test_backtest_data.py,TestTopNByMcap,test_ranks_and_caches,get_top_n_by_mcap sorts by market cap descending writes JSON cache
+test_backtest_data.py,TestTopNByMcap,test_excludes_symbols_with_no_mcap,Symbols where fetcher returned None excluded from ranking
+test_backtest_data.py,TestTopNByMcap,test_force_refresh_re_fetches_all,force_refresh=True overwrites all cached market caps
+test_backtest_data.py,TestTopNByMcap,test_top_n_smaller_than_universe,N=5 of 50 returns first 5 by mcap
+test_backtest_engine.py,TestEmpty,test_no_universe_returns_starting_equity,Empty bars dict -> ending equity == starting trades=[]
+test_backtest_engine.py,TestEmpty,test_flat_data_no_signals_no_trades,Flat OHLC -> no breakouts no trades equity unchanged
+test_backtest_engine.py,TestBuyFlow,test_buy_fills_at_next_day_open,Donchian breakout day fills at next bar's open price
+test_backtest_engine.py,TestBuyFlow,test_buy_skipped_when_no_cash,Sizer skips when 1 share > target equity
+test_backtest_engine.py,TestSellFlow,test_sell_signal_closes_position_at_next_day_open,Held position with breakdown signal exits at next-day open
+test_backtest_engine.py,TestCapAndDedup,test_position_cap_respected,30 simultaneous breakouts with cap=5 -> only 5 positions
+test_backtest_engine.py,TestCapAndDedup,test_held_ticker_not_re_bought,Already held -> not re-bought even on continued breakout
+test_backtest_engine.py,TestEquityCurve,test_equity_curve_has_one_point_per_trading_day,Equity series has one point per trading day in date range
+test_backtest_engine.py,TestEquityCurve,test_equity_curve_index_is_datetime,Equity series index is DatetimeIndex (not generic)
+test_backtest_metrics.py,TestEmpty,test_empty_curve_returns_zeros,Empty equity curve -> all-zero metrics (no NaN)
+test_backtest_metrics.py,TestReturns,test_total_return_pct,Total return pct from starting/ending equity
+test_backtest_metrics.py,TestReturns,test_cagr_for_one_year,~10% gain over ~1 year -> ~10% CAGR (within rounding)
+test_backtest_metrics.py,TestReturns,test_negative_return,Loss correctly reported as negative pct
+test_backtest_metrics.py,TestDrawdown,test_no_drawdown_when_monotonic_up,Monotonic-up curve -> max DD == 0
+test_backtest_metrics.py,TestDrawdown,test_max_drawdown_finds_worst_dip,Multi-peak curve correctly finds the deepest peak-to-trough drawdown
+test_backtest_metrics.py,TestSharpe,test_sharpe_zero_for_flat_curve,Flat returns std=0 -> sharpe forced to 0 (no division by zero)
+test_backtest_metrics.py,TestSharpe,test_sharpe_positive_for_upward_curve,Steady up-trend produces high positive sharpe
+test_backtest_metrics.py,TestSharpe,test_sharpe_negative_for_downward_curve,Steady down-trend produces negative sharpe
+test_backtest_metrics.py,TestTrades,test_win_rate,Win rate = winners/total trades
+test_backtest_metrics.py,TestTrades,test_profit_factor,Profit factor = gross_wins / gross_losses
+test_backtest_metrics.py,TestTrades,test_profit_factor_inf_when_no_losses,No losing trades -> profit factor inf (not div-by-zero)
+test_backtest_metrics.py,TestTrades,test_avg_win_and_loss,Mean P&L of winners and losers reported separately
+test_backtest_metrics.py,TestTrades,test_avg_holding_days,Avg holding period in days across all trades
+test_backtest_metrics.py,TestExposure,test_open_position_at_end_counted,Position open at end -> 100% exposure heuristic
+test_backtest_metrics.py,TestExposure,test_no_trades_no_open_no_exposure,No trades + no open positions -> 0% exposure
+test_backtest_metrics.py,TestExposure,test_partial_exposure,Trade open 5/10 days -> 50% exposure

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -256,6 +257,175 @@ async def _run_reconcile_cli(config) -> None:
         console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
         for e in result.errors[:10]:
             console.print(f"  - {e}")
+
+
+@app.command()
+def backtest(
+    start: str = typer.Option(..., "--start", help="Start date YYYY-MM-DD"),
+    end: str = typer.Option(..., "--end", help="End date YYYY-MM-DD (exclusive)"),
+    top_n: int = typer.Option(100, "--top-n", help="Top N S&P 500 by market cap"),
+    pct: float = typer.Option(0.04, "--pct", help="Per-position size as fraction of net_liq"),
+    max_positions: int = typer.Option(25, "--max-positions", help="Position cap"),
+    equity: float = typer.Option(100_000.0, "--equity", help="Starting equity"),
+    output_dir: Optional[str] = typer.Option(
+        None, "--output", help="Output directory (default: backtests/<timestamp>/)"
+    ),
+    force_refresh: bool = typer.Option(
+        False, "--force-refresh", help="Re-fetch bars + market caps even if cached"
+    ),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Backtest the locked Donchian strategy against S&P 500 history.
+
+    Default settings differ from production: top-100 / 4% / 25-cap (vs
+    production's full universe / 1.8% / 50-cap) for cleaner read-out per
+    docs/ROADMAP.md Session I.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level)
+    _run_backtest_cli(
+        start=date.fromisoformat(start),
+        end=date.fromisoformat(end),
+        top_n=top_n,
+        pct=pct,
+        max_positions=max_positions,
+        equity=equity,
+        output_dir=output_dir,
+        force_refresh=force_refresh,
+    )
+
+
+def _run_backtest_cli(
+    *, start, end, top_n: int, pct: float, max_positions: int,
+    equity: float, output_dir: str | None, force_refresh: bool,
+) -> None:
+    import json
+    from dataclasses import asdict
+    from datetime import datetime as _dt
+
+    from vibe_trade.backtest.data import (
+        fetch_and_cache_bars,
+        get_top_n_by_mcap,
+    )
+    from vibe_trade.backtest.engine import run_backtest
+    from vibe_trade.backtest.metrics import compute_metrics
+    from vibe_trade.data.universe import SP500_SYMBOLS
+    from vibe_trade.strategy.examples.donchian import DonchianStrategy
+
+    # ---------------------------------------------------------- universe
+    console.print(
+        f"[bold]Backtest[/bold] {start} -> {end}  top_n={top_n}  "
+        f"pct={pct:.3f}  max_pos={max_positions}  equity=${equity:,.0f}"
+    )
+    console.print("Selecting top-N by market cap...")
+    universe = get_top_n_by_mcap(
+        SP500_SYMBOLS, n=top_n, force_refresh=force_refresh,
+    )
+    console.print(f"  selected {len(universe)} symbols")
+
+    # ---------------------------------------------------------- bars
+    console.print("Ensuring historical bars are cached...")
+    paths = fetch_and_cache_bars(
+        universe, start=start, end=end, force_refresh=force_refresh,
+    )
+    console.print(f"  bars available for {len(paths)} symbols")
+
+    # ---------------------------------------------------------- run
+    console.print("Running backtest...")
+    result = run_backtest(
+        strategy=DonchianStrategy(),
+        universe=list(paths.keys()),
+        start=start, end=end,
+        starting_equity=equity,
+        pct_per_position=pct,
+        max_positions=max_positions,
+    )
+    metrics = compute_metrics(result)
+
+    # ---------------------------------------------------------- output dir
+    out = Path(output_dir) if output_dir else (
+        Path("backtests") / _dt.now().strftime("%Y%m%d_%H%M%S")
+    )
+    out.mkdir(parents=True, exist_ok=True)
+
+    # equity.csv
+    result.equity_curve.to_csv(out / "equity.csv", header=["equity"])
+
+    # trades.csv
+    if result.trades:
+        trades_df = pd_DataFrame_from_trades(result.trades)
+        trades_df.to_csv(out / "trades.csv", index=False)
+
+    # metrics.json (params + metrics together)
+    summary = {
+        "params": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "top_n": top_n,
+            "pct_per_position": pct,
+            "max_positions": max_positions,
+            "starting_equity": equity,
+            "universe_size": len(paths),
+        },
+        "result": {
+            "ending_equity": result.ending_equity,
+            "open_positions_at_end": result.open_positions_at_end,
+            "skipped_buys_no_cash": result.skipped_buys_no_cash,
+            "skipped_buys_no_data": result.skipped_buys_no_data,
+        },
+        "metrics": _metrics_to_jsonable(asdict(metrics)),
+    }
+    (out / "metrics.json").write_text(json.dumps(summary, indent=2))
+
+    # ---------------------------------------------------------- summary
+    table = Table(title="Backtest Result")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_row("Total return", f"{metrics.total_return_pct:+.2f}%")
+    table.add_row("CAGR", f"{metrics.cagr_pct:+.2f}%")
+    table.add_row("Sharpe (annual)", f"{metrics.sharpe:.2f}")
+    table.add_row("Max drawdown", f"{metrics.max_drawdown_pct:.2f}%")
+    table.add_row("# trades", str(metrics.n_trades))
+    table.add_row("Win rate", f"{metrics.win_rate * 100:.1f}%")
+    pf_str = "inf" if metrics.profit_factor == float("inf") else f"{metrics.profit_factor:.2f}"
+    table.add_row("Profit factor", pf_str)
+    table.add_row("Avg win / loss", f"${metrics.avg_win:,.2f} / ${metrics.avg_loss:,.2f}")
+    table.add_row("Avg holding (days)", f"{metrics.avg_holding_days:.1f}")
+    table.add_row("Exposure", f"{metrics.exposure_pct:.1f}%")
+    table.add_row("Open at end", str(result.open_positions_at_end))
+    console.print(table)
+    console.print(f"\n[dim]Outputs: {out.resolve()}[/dim]")
+
+
+def pd_DataFrame_from_trades(trades):
+    """Trades -> DataFrame with computed pct/holding columns."""
+    import pandas as pd
+    rows = [
+        {
+            "symbol": t.symbol,
+            "entry_date": t.entry_date.isoformat(),
+            "entry_price": t.entry_price,
+            "exit_date": t.exit_date.isoformat(),
+            "exit_price": t.exit_price,
+            "qty": t.qty,
+            "pnl": t.pnl,
+            "pnl_pct": t.pnl_pct,
+            "holding_days": t.holding_days,
+        }
+        for t in trades
+    ]
+    return pd.DataFrame(rows)
+
+
+def _metrics_to_jsonable(d: dict) -> dict:
+    """Replace inf with the string 'inf' so json.dumps doesn't choke."""
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, float) and (v == float("inf") or v == float("-inf")):
+            out[k] = str(v)
+        else:
+            out[k] = v
+    return out
 
 
 @app.command()
