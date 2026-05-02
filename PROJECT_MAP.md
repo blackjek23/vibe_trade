@@ -1,216 +1,166 @@
-# Vibe Trade — Project Map
+# Vibe Trade — Project Map (V2)
 
-Use this file to understand what each file does, how they connect,
-and where to look when debugging.
+Use this file to understand what each module does, how they connect, and where to look when debugging.
+
+V1 was deleted in Session E (commit `65dcbb9`). This document describes the V2 implementation as it stands.
 
 ---
 
 ## How The Bot Works (Big Picture)
 
+Three OS-cron-triggered CLI jobs per trading day. Each is short-lived, does one thing, and exits.
+
 ```mermaid
 flowchart TD
-    subgraph Entry["Entry Points"]
-        style Entry fill:#2563eb,color:#fff,stroke:#1d4ed8
-        CLI["cli.py\nvibe-trade scan / start / panic"]
-        MAIN["__main__.py"]
+    subgraph Cron["OS Cron (Asia/Jerusalem)"]
+        CRON_S["16:00 — vibe-trade submit"]
+        CRON_R["16:25 — vibe-trade record"]
+        CRON_X["23:30 — vibe-trade reconcile"]
     end
 
-    subgraph Config["Configuration"]
-        style Config fill:#7c3aed,color:#fff,stroke:#6d28d9
-        TOML["config/config.toml"]
-        ENV[".env secrets"]
-        CFG["config.py\nPydantic validation"]
+    subgraph CLI["CLI Layer (cli.py)"]
+        SUB_CMD["submit"]
+        REC_CMD["record"]
+        RCN_CMD["reconcile"]
+        BT_CMD["backtest / refresh-sp100"]
+        UTIL_CMD["status / trades / config-check / panic"]
     end
 
-    subgraph Core["Core Engine"]
-        style Core fill:#059669,color:#fff,stroke:#047857
-        SCANNER["scanner.py\nOrchestrator"]
-        SCHED["scheduler.py\nAPScheduler cron"]
+    subgraph Jobs["Jobs (src/vibe_trade/jobs/)"]
+        SUB["submit.py — exits then entries"]
+        REC["record.py — fills -> SUBMITTED rows"]
+        RCN["reconcile.py — finalize statuses + snapshot"]
     end
 
-    subgraph Broker["Broker Layer"]
-        style Broker fill:#ea580c,color:#fff,stroke:#c2410c
-        IB["ib_broker.py\nib_async"]
-        TWS["IB TWS / Gateway\npaper:7497 live:7496"]
+    subgraph Brain["Strategy + Sizing"]
+        DON["strategy/examples/donchian.py\nN=20 symmetric breakout"]
+        SIZE["risk/position_sizer.py\n1.8% net_liq * 50 cap"]
+        RM["risk/manager.py\nat-cap + already-held checks"]
     end
 
-    subgraph Data["Data Layer"]
-        style Data fill:#ea580c,color:#fff,stroke:#c2410c
-        PROV["data/provider.py\nyfinance OHLCV"]
-        YF["Yahoo Finance\n(yfinance)"]
-        UNIV["data/universe.py\nS&P 500 symbols"]
+    subgraph IO["External I/O"]
+        IB["broker/ib_broker.py\nib_async -> TWS"]
+        YF["data/provider.py\nyfinance OHLCV"]
+        DB[("SQLite\ndata/vibe_trade.db")]
     end
 
-    subgraph Strategy["Strategy Layer"]
-        style Strategy fill:#059669,color:#fff,stroke:#047857
-        BASE_S["strategy/base.py\nBaseStrategy ABC"]
-        IND["strategy/indicators.py\nbacktrader engine"]
-        MA["ma_crossover.py"]
-        RSI["rsi_mean_revert.py"]
-        REG["registry.py"]
-    end
+    CRON_S --> SUB_CMD --> SUB
+    CRON_R --> REC_CMD --> REC
+    CRON_X --> RCN_CMD --> RCN
 
-    subgraph Risk["Risk Layer"]
-        style Risk fill:#dc2626,color:#fff,stroke:#b91c1c
-        RMGR["risk/manager.py"]
-        PSIZ["risk/position_sizer.py"]
-        TRAIL["risk/trailing.py"]
-        PANIC["risk/panic.py"]
-    end
+    SUB --> IB
+    SUB --> YF
+    SUB --> DON
+    SUB --> SIZE
+    SUB --> RM
 
-    subgraph Orders["Order Execution"]
-        style Orders fill:#059669,color:#fff,stroke:#047857
-        EXEC["orders/executor.py\nmarket orders only"]
-    end
+    REC --> IB
+    REC --> DB
 
-    subgraph Notify["Notifications"]
-        style Notify fill:#7c3aed,color:#fff,stroke:#6d28d9
-        TELE["notify/telegram.py"]
-        CONS["notify/console.py"]
-    end
+    RCN --> IB
+    RCN --> DB
 
-    subgraph DB["Database"]
-        style DB fill:#7c3aed,color:#fff,stroke:#6d28d9
-        ENG["db/engine.py"]
-        MOD["db/models.py"]
-        REPO["db/repository.py"]
-        SQLITE[("SQLite\nvibe_trade.db")]
-    end
-
-    MAIN --> CLI
-    TOML --> CFG
-    ENV --> CFG
-    CLI --> CFG
-    CLI --> SCANNER
-    CLI --> SCHED
-    SCHED --> SCANNER
-
-    SCANNER --> IB
-    IB --> TWS
-    SCANNER --> PROV
-    PROV --> YF
-    SCANNER --> UNIV
-    SCANNER --> REG
-    REG --> MA & RSI
-    MA & RSI --> IND
-    MA & RSI --> BASE_S
-    SCANNER --> RMGR
-    RMGR --> PSIZ
-    SCANNER --> TRAIL
-    SCANNER --> EXEC
-    EXEC --> IB
-    EXEC --> REPO
-    SCANNER --> TELE & CONS
-    SCANNER --> REPO
-    REPO --> MOD
-    REPO --> ENG
-    ENG --> SQLITE
-    PANIC --> IB
+    style Cron fill:#7c3aed,color:#fff
+    style Jobs fill:#059669,color:#fff
+    style Brain fill:#dc2626,color:#fff
+    style IO fill:#ea580c,color:#fff
 ```
 
 ---
 
-## Scan Cycle Sequence
+## Daily Sequence (the contract)
 
-This is the exact flow inside `run_scan_cycle()` — the heart of the bot:
+```
+Mon 16:00  vibe-trade submit  (client_id=1)
+           IB:  read positions, place market orders
+           DB:  no writes (V2 invariant)
+
+Mon 16:25  vibe-trade record  (client_id=2)
+           IB:  read ib.fills() — execution data with permId
+           DB:  insert SUBMITTED rows (BUYs) /
+                flip OPEN -> PENDING_CLOSE (SELLs)
+
+Mon 16:30  US market opens — IB fills the market orders
+
+Mon 23:00  US market closes
+
+Mon 23:30  vibe-trade reconcile  (client_id=3)
+           IB:  ib.fills() + ib.trades().orderStatus
+           DB:  status transitions + portfolio_snapshot
+                + daily_pnl with real counts
+
+Tue 00:00  Idle until next 16:00
+```
+
+**Cross-process key fact:** between submit (16:00) and record (16:25), processes restart. `ib.trades()` returns the orders but `order.totalQuantity` and `orderId` are reset to 0. Only `permId` survives. Record + reconcile dedup on `permId` and pull quantities from `ib.fills()`. Verified live 2026-04-27.
+
+---
+
+## Submit Sequence
 
 ```mermaid
 sequenceDiagram
+    participant CRON as cron 16:00
     participant CLI as cli.py
-    participant SC as scanner.py
-    participant BR as IBBroker
-    participant DP as DataProvider
-    participant UN as Universe
-    participant ST as Strategy
+    participant SUB as jobs/submit.py
+    participant IB as IBBroker (cid=1)
+    participant YF as DataProvider
+    participant ST as DonchianStrategy
+    participant SZ as size_position
     participant RM as RiskManager
-    participant EX as OrderExecutor
-    participant TS as TrailingStop
-    participant DB as Repository
-    participant NF as Notifier
 
-    CLI->>SC: run_scan_cycle(config, strategies, notifier)
+    CRON->>CLI: vibe-trade submit
+    CLI->>IB: connect(client_id=1)
+    CLI->>SUB: run_submit(...)
 
-    Note over SC: Step 1: Connect
-    SC->>BR: connect()
-    BR-->>SC: connected
+    SUB->>IB: get_account_summary()
+    SUB->>IB: get_positions()
 
-    Note over SC: Step 2: Account State
-    SC->>BR: get_account_summary()
-    BR-->>SC: AccountSummary ($100k, positions)
-    SC->>BR: get_positions()
-    BR-->>SC: [Position, Position, ...]
-
-    Note over SC: Step 3: Portfolio Risk Gate
-    SC->>RM: check_portfolio_limits(account, positions)
-    RM-->>SC: RiskDecision(approved=True)
-
-    Note over SC: Step 4: Scan Universe
-    SC->>UN: load_universe(config)
-    UN-->>SC: ["AAPL", "MSFT", ... 500 symbols]
-
-    loop For each symbol
-        SC->>DP: get_candles(symbol, "1h", 60 days)
-        Note over DP: yfinance (not IB)
-        DP-->>SC: DataFrame
-
-        SC->>ST: evaluate(symbol, candles)
-        Note over ST: compute_indicators() via backtrader
-        ST-->>SC: SignalResult(BUY, confidence=0.7)
-
-        SC->>DB: record_signal(symbol, strategy, BUY)
-    end
-
-    Note over SC: Step 5: Execute Signals
-    loop For each BUY/SELL signal
-        SC->>RM: check_trade(signal, account, positions)
-        RM-->>SC: RiskDecision(approved=True)
-
-        SC->>EX: execute_signal(signal, account)
-        EX->>BR: place_market_order(AAPL, BUY, 15 shares)
-        BR-->>EX: OrderResult(FILLED, $185.50)
-        EX->>DB: create_trade(AAPL, BUY, $185.50, 15)
-        EX-->>SC: OrderResult
-
-        SC->>NF: notify_trade("Bought AAPL @ $185.50")
-    end
-
-    Note over SC: Step 6: Trailing Stops
-    SC->>DB: get_open_trades()
-    loop For each open trade
-        SC->>DP: get_candles(symbol) — price from latest close
-        SC->>TS: evaluate_trailing_stop(trade, price, ATR)
-        alt Stop triggered
-            TS-->>SC: should_close=True
-            SC->>BR: place_market_order(SELL)
-            SC->>DB: close_trade()
-            SC->>NF: notify_trade("Stop closed AAPL")
-        else Tighten stop
-            TS-->>SC: new_stop=$182.00
-            SC->>DB: update_trailing_stop()
+    Note over SUB: Exits phase
+    loop For each long position
+        SUB->>YF: get_candles(sym, "1d", 60d)
+        SUB->>ST: evaluate(sym, df)
+        alt SignalType.SELL
+            SUB->>IB: place_market_order(sym, SELL, held_qty)
         end
     end
 
-    Note over SC: Step 7: Daily P&L
-    SC->>DB: upsert_daily(realized, unrealized, account_value)
+    Note over SUB: Entries phase
+    SUB->>RM: can_open_new_position(positions)
+    alt approved
+        loop For each universe ticker not held
+            SUB->>YF: get_candles(sym, "1d", 60d)
+            SUB->>ST: evaluate(sym, df)
+            alt SignalType.BUY
+                SUB->>SZ: size_position(net_liq, price, count)
+                alt shares > 0
+                    SUB->>IB: place_market_order(sym, BUY, shares)
+                end
+            end
+        end
+    else at cap
+        Note over SUB: skip entries phase entirely
+    end
 
-    Note over SC: Step 8: Summary
-    SC->>NF: notify_summary("Scanned: 500 | Signals: 12 | Orders: 2")
-    SC->>BR: disconnect()
-    SC->>DB: complete_scan(scan_id)
+    SUB-->>CLI: SubmitResult
+    CLI->>IB: disconnect()
 ```
 
 ---
 
 ## Module Dependency Graph
 
-Shows which modules import from which — so you know what breaks if you change a file:
+Shows which modules import from which — what breaks if you change a file.
 
 ```mermaid
 graph LR
-    config["config.py"]
     cli["cli.py"]
-    scanner["scanner.py"]
-    scheduler["scheduler.py"]
+    config["config.py"]
+    main["__main__.py"]
+
+    sub["jobs/submit.py"]
+    rec["jobs/record.py"]
+    rcn["jobs/reconcile.py"]
 
     ib["broker/ib_broker.py"]
     base_b["broker/base.py"]
@@ -218,19 +168,18 @@ graph LR
 
     provider["data/provider.py"]
     universe["data/universe.py"]
+    sp100["data/sp100_top.py"]
 
     base_s["strategy/base.py"]
-    indicators["strategy/indicators.py"]
-    registry["strategy/registry.py"]
-    ma["ma_crossover.py"]
-    rsi["rsi_mean_revert.py"]
+    don["strategy/examples/donchian.py"]
 
     manager["risk/manager.py"]
     sizer["risk/position_sizer.py"]
-    trailing["risk/trailing.py"]
     panic["risk/panic.py"]
 
-    executor["orders/executor.py"]
+    bt_data["backtest/data.py"]
+    bt_eng["backtest/engine.py"]
+    bt_met["backtest/metrics.py"]
 
     base_n["notify/base.py"]
     console["notify/console.py"]
@@ -240,78 +189,55 @@ graph LR
     models_d["db/models.py"]
     repo["db/repository.py"]
 
+    main --> cli
     cli --> config
-    cli --> scanner
-    cli --> scheduler
-    cli --> registry
-    cli --> engine
-    cli --> telegram
-    cli --> console
+    cli --> sub
+    cli --> rec
+    cli --> rcn
+    cli --> bt_data
+    cli --> bt_eng
+    cli --> bt_met
+    cli --> sp100
     cli --> panic
 
-    scanner --> config
-    scanner --> ib
-    scanner --> provider
-    scanner --> universe
-    scanner --> base_s
-    scanner --> indicators
-    scanner --> manager
-    scanner --> trailing
-    scanner --> executor
-    scanner --> base_n
-    scanner --> repo
-    scanner --> engine
-    scanner --> models_b
+    sub --> ib
+    sub --> provider
+    sub --> don
+    sub --> sizer
+    sub --> manager
+    sub --> models_b
 
-    scheduler --> config
-    scheduler --> scanner
+    rec --> ib
+    rec --> repo
+
+    rcn --> ib
+    rcn --> repo
 
     ib --> base_b
     ib --> models_b
     ib --> config
 
-    yf["yfinance (external)"]
-    provider --> yf
+    don --> base_s
 
-    ma --> base_s
-    ma --> indicators
-    rsi --> base_s
-    rsi --> indicators
-    registry --> ma
-    registry --> rsi
-    registry --> config
-
-    manager --> config
-    manager --> sizer
     manager --> models_b
+    manager --> base_s
 
-    trailing --> config
-
-    executor --> ib
-    executor --> repo
-    executor --> sizer
-    executor --> models_b
-
-    panic --> ib
-
-    console --> base_n
-    telegram --> base_n
+    bt_eng --> sizer
+    bt_eng --> base_s
+    bt_eng --> bt_data
 
     repo --> models_d
     engine --> models_d
 
-    style config fill:#7c3aed,color:#fff
     style cli fill:#2563eb,color:#fff
-    style scanner fill:#059669,color:#fff
-    style scheduler fill:#059669,color:#fff
+    style sub fill:#059669,color:#fff
+    style rec fill:#059669,color:#fff
+    style rcn fill:#059669,color:#fff
     style ib fill:#ea580c,color:#fff
-    style manager fill:#dc2626,color:#fff
+    style don fill:#dc2626,color:#fff
     style sizer fill:#dc2626,color:#fff
-    style trailing fill:#dc2626,color:#fff
-    style panic fill:#dc2626,color:#fff
+    style manager fill:#dc2626,color:#fff
     style repo fill:#7c3aed,color:#fff
-    style engine fill:#7c3aed,color:#fff
-    style models_d fill:#7c3aed,color:#fff
 ```
 
 ---
@@ -324,17 +250,22 @@ erDiagram
         int id PK
         string symbol
         string side "BUY or SELL"
-        string strategy_name
+        string strategy_name "donchian (V2 single)"
         float entry_price
         datetime entry_time
+        datetime submitted_at "when BUY sent to IB"
+        int ib_order_id "session-scoped (resets across processes)"
+        bigint perm_id "indexed; IB persistent ID for cross-process dedup"
         float exit_price
         datetime exit_time
-        int quantity
-        float trailing_stop
-        string status "OPEN / CLOSED / CANCELLED"
-        float pnl
+        datetime exit_submitted_at "when SELL sent to IB"
+        int exit_ib_order_id
+        bigint exit_perm_id "indexed; IB persistent ID for SELL"
+        int requested_quantity "what we asked for"
+        int filled_quantity "what actually executed"
+        string status "SUBMITTED OPEN PENDING_CLOSE CLOSED PARTIALLY_FILLED CANCELLED"
+        float pnl "from fill commissionReport.realizedPNL"
         float pnl_pct
-        int ib_order_id
         text notes
         datetime created_at
         datetime updated_at
@@ -344,13 +275,13 @@ erDiagram
         int id PK
         string symbol
         string strategy_name
-        string signal_type "BUY / SELL / HOLD"
+        string signal_type "BUY SELL HOLD"
         float confidence
         text metadata_json
         bool risk_approved
         text risk_reason
         bool executed
-        string scan_id FK
+        string scan_id
         datetime created_at
     }
 
@@ -359,11 +290,23 @@ erDiagram
         date date UK
         float realized_pnl
         float unrealized_pnl
-        float total_pnl
-        int trades_opened
+        int trades_opened "real count from reconcile"
         int trades_closed
         float account_value
+        float total_cash
+        int open_positions_count
         datetime created_at
+    }
+
+    portfolio_snapshot {
+        int id PK
+        date date "indexed"
+        string symbol
+        int quantity
+        float avg_cost
+        float market_price
+        float market_value
+        float unrealized_pnl
     }
 
     scan_log {
@@ -375,239 +318,144 @@ erDiagram
         int signals_generated
         int orders_placed
         text errors
-        string status "STARTED / SUCCESS / PARTIAL / FAILED"
+        string status
     }
 
-    scan_log ||--o{ signals : "scan_id"
-    trades ||--o{ signals : "symbol + strategy (logical)"
+    daily_pnl ||--o{ portfolio_snapshot : "same date"
     daily_pnl ||--o{ trades : "date (logical)"
 ```
 
----
+**Status lifecycle:**
 
-## Config Loading Flow
+```
+BUY:   SUBMITTED -> OPEN              (full fill)
+                 -> PARTIALLY_FILLED  (partial, no carry-over)
+                 -> CANCELLED         (no fills + IB terminal)
 
-Shows how configuration is resolved — highest priority on top:
-
-```mermaid
-flowchart TD
-    subgraph Sources["Config Sources (highest priority first)"]
-        ENV_VAR["1. Environment Variables\nVIBE_TRADE_BROKER_ACCOUNT=DU12345"]
-        ENV_FILE["2. .env File\nVIBE_TRADE_TELEGRAM_TOKEN=abc123"]
-        TOML["3. config/config.toml\n[general]\nmode = 'paper'"]
-        DEFAULTS["4. Pydantic Defaults\nconfig.py hardcoded defaults"]
-    end
-
-    ENV_VAR --> MERGE
-    ENV_FILE --> MERGE
-    TOML --> MERGE
-    DEFAULTS --> MERGE
-
-    MERGE["AppConfig(BaseSettings)\nPydantic merges all sources"]
-
-    MERGE --> GEN["GeneralConfig\nmode, log_level, db_path"]
-    MERGE --> BRK["BrokerConfig\nhost, ports, client_id, timeout"]
-    MERGE --> UNI["UniverseConfig\nsource, custom_symbols"]
-    MERGE --> SCH["SchedulerConfig\ninterval, market hours, trading days"]
-    MERGE --> STR["StrategyConfig\nactive list, timeframe, per-strategy params"]
-    MERGE --> RSK["RiskConfig\nmax risk %, max positions, trailing stop"]
-    MERGE --> TEL["TelegramConfig\ntoken, chat_id, notification flags"]
-
-    GEN --> SCANNER["scanner.py"]
-    BRK --> BROKER["ib_broker.py"]
-    UNI --> UNIVERSE["universe.py"]
-    SCH --> SCHEDULER["scheduler.py"]
-    STR --> STRATEGIES["registry.py\nma_crossover / rsi_mean_revert"]
-    RSK --> RISK["risk/manager.py\nrisk/trailing.py\nrisk/position_sizer.py"]
-    TEL --> NOTIFY["telegram.py"]
-
-    style ENV_VAR fill:#dc2626,color:#fff
-    style ENV_FILE fill:#ea580c,color:#fff
-    style TOML fill:#2563eb,color:#fff
-    style DEFAULTS fill:#6b7280,color:#fff
-    style MERGE fill:#059669,color:#fff
+SELL:  OPEN -> PENDING_CLOSE -> CLOSED            (full fill)
+                             -> PARTIALLY_FILLED
+                             -> reverts to OPEN   (cancel: position still held)
 ```
 
 ---
 
 ## File-by-File Reference
 
-### Root Files
+### Entry points
 
-| File | What It Does |
-|------|-------------|
-| `pyproject.toml` | Project metadata, dependencies, CLI entry point (`vibe-trade` command). Build system is hatchling. |
-| `.gitignore` | Excludes: .venv, __pycache__, .env, config.toml, *.db, logs/, data/ |
-| `.env.example` | Template for secrets (Telegram token, IB account). Copy to `.env`. |
-| `config/config.example.toml` | Full config template with all sections and comments. Copy to `config/config.toml`. |
-
-### Entry Points
-
-| File | What It Does |
-|------|-------------|
-| `src/vibe_trade/__init__.py` | Package version (`__version__ = "0.1.0"`). |
-| `src/vibe_trade/__main__.py` | Makes `python -m vibe_trade` work. Just calls `cli.app()`. |
+| File | Purpose |
+|---|---|
+| `pyproject.toml` | Deps + `vibe-trade` console script. |
+| `src/vibe_trade/__main__.py` | Makes `python -m vibe_trade` work. |
+| `src/vibe_trade/cli.py` | Typer commands: `submit`, `record`, `reconcile`, `backtest`, `refresh-sp100`, `status`, `trades`, `config-check`, `panic`. |
 
 ### Config (`config.py`)
 
-**What:** Loads `config/config.toml` + `.env` file, validates everything with Pydantic.
+V2 config sections:
 
-**Key classes:**
-- `AppConfig` — top-level, holds all config sections
-- `GeneralConfig` — mode (paper/live), log level, db path
-- `BrokerConfig` — IB host, ports, client ID. `get_port(mode)` returns 7497 or 7496
-- `UniverseConfig` — "sp500" or "custom" symbol list
-- `SchedulerConfig` — interval, market hours, timezone, trading days
-- `StrategyConfig` — which strategies are active, timeframe, per-strategy params
-- `RiskConfig` — max risk per trade, max positions, exposure limits, trailing stop settings
-- `TelegramConfig` — bot token, chat ID, notification preferences
+| Class | What |
+|---|---|
+| `AppConfig` | Top-level — wires up all sub-configs. |
+| `GeneralConfig` | mode (paper/live), log level, db path |
+| `BrokerConfig` | host, paper_port=7497, live_port=7496, client_id, retry/pacing |
+| `UniverseConfig` | source ("sp500" or "custom"), custom_symbols |
+| `SchedulerConfig` | retained as a section (interval/market hours) but not used by V2 jobs — OS cron drives the schedule. Kept dormant for future use. |
+| `RiskConfig` | **V2 sizing fields:** `pct_per_position` (default 0.018), `max_open_positions` (default 50). |
+| `TelegramConfig` | token, chat_id, notification flags (currently unwired — Session F) |
 
-**Validation:** Rejects negative percentages, invalid timeframes, bad time formats, slow_period <= fast_period, overbought <= oversold.
+Removed in Session E: `TrailingStopConfig`, `MACrossoverConfig`, `RSIMeanRevertConfig`, `StrategyConfig`.
 
-**Debug tip:** Run `vibe-trade config-check` to validate your config.
+### Jobs (`jobs/`)
 
-### CLI (`cli.py`)
+| File | Function | Trigger |
+|---|---|---|
+| `jobs/submit.py` | `run_submit(broker, strategy, data_provider, risk_manager, universe, ...)` | cron 16:00 |
+| `jobs/record.py` | `run_record(broker, repo, strategy_name="donchian", now=None)` | cron 16:25 |
+| `jobs/reconcile.py` | `run_reconcile(broker, trade_repo, snap_repo, daily_repo, today=None)` | cron 23:30 |
 
-**What:** Typer-based command line interface. All user-facing commands live here.
+Each is broker-injected for testability — tests pass `MockBroker`. Constants `SUBMIT_CLIENT_ID=1`, `RECORD_CLIENT_ID=2`, `RECONCILE_CLIENT_ID=3` live in `jobs/submit.py`.
 
-**Commands:**
-| Command | What It Does |
-|---------|-------------|
-| `vibe-trade scan` | Run one scan cycle (connect to IB, scan, trade, disconnect) |
-| `vibe-trade start` | Start the scheduler (periodic scans during market hours) |
-| `vibe-trade status` | Show open positions + today's P&L from the database |
-| `vibe-trade trades` | Show recent trades table |
-| `vibe-trade config-check` | Validate config file and show key settings |
-| `vibe-trade panic --yes` | EMERGENCY: close ALL positions via market orders |
+### Broker (`broker/`)
 
-**Debug tip:** Each command loads config, sets up logging, and initializes the DB independently.
+| File | Purpose |
+|---|---|
+| `broker/base.py` | `BaseBroker` ABC: connect, disconnect, get_account_summary, get_positions, place_market_order, cancel_all_orders. |
+| `broker/models.py` | Dataclasses: `AccountSummary`, `Position`, `OrderRequest`, `OrderResult`. |
+| `broker/ib_broker.py` | `IBBroker` — ib_async wrapper. Connects to TWS/Gateway. Paper=7497, Live=7496. |
 
-### Scanner (`scanner.py`)
+### Data (`data/`)
 
-**What:** The orchestrator — `run_scan_cycle()` is the heart of the entire bot. It connects all modules together into one atomic scan.
+| File | Purpose |
+|---|---|
+| `data/provider.py` | `DataProvider.get_candles(symbol, timeframe, lookback_days)` via yfinance, async-friendly. |
+| `data/universe.py` | `SP500_SYMBOLS` static list (~494 names, used by submit and refresh-sp100). |
+| `data/sp100_top.py` | Static top-100 by market cap snapshot. Generated by `vibe-trade refresh-sp100`. Used by backtest. `LAST_UPDATED` field documents the snapshot date. |
 
-**Flow:** Connect -> Account state -> Risk gates -> Scan universe -> Execute signals -> Trailing stops -> Daily P&L -> Notify -> Disconnect
+### Strategy (`strategy/`)
 
-**Depends on:** broker, data, strategy, risk, orders, notify, db (everything)
+| File | Purpose |
+|---|---|
+| `strategy/base.py` | `BaseStrategy` ABC + `SignalResult` dataclass + `SignalType` enum. **No `trailing_stop_price` field** (V1, removed in Session E). |
+| `strategy/examples/donchian.py` | The single V2 strategy. N=20, symmetric, **excluding** the bar being evaluated. BUY when close > prior 20-day high; SELL when close < prior 20-day low. |
 
-**Debug tip:** Each symbol is scanned in a try/except so one failure doesn't kill the whole scan. Check `scan_log` table for error history.
+### Risk (`risk/`)
 
-**Known issue:** Signal ID wiring is incomplete (line 124, `signal_id=0`).
+| File | Purpose |
+|---|---|
+| `risk/manager.py` | `RiskManager.can_open_new_position(positions)` (cap check) + `can_trade_symbol(signal, positions)` (already-held check). No more concentration logic — structurally enforced by sizer. |
+| `risk/position_sizer.py` | `size_position(net_liq, price, current_position_count, pct=0.018, max=50) -> int`. Integer cents arithmetic to defeat float imprecision (`100_000 * 0.018` evaluates to `1799.999...`). Returns 0 to skip (cap reached / 1 share > target / non-positive inputs). |
+| `risk/panic.py` | `panic_close_all()` — emergency exit-all. Used by `vibe-trade panic`. |
 
-### Scheduler (`scheduler.py`)
+### Backtest (`backtest/`)
 
-**What:** APScheduler wrapper. Fires `run_scan_cycle()` at configured intervals during market hours.
+| File | Purpose |
+|---|---|
+| `backtest/data.py` | `fetch_and_cache_bars` (CSV per symbol) + `get_top_n_by_mcap`. yfinance fetcher injectable for offline tests. Cache dir: `data/historical/`. |
+| `backtest/engine.py` | `run_backtest(strategy, universe, start, end, ...)` — day-by-day loop, **reuses** production `DonchianStrategy` + `size_position`. Next-day-open fills, zero frictions. |
+| `backtest/metrics.py` | `compute_metrics(result)` — Sharpe, max drawdown, CAGR, win rate, profit factor, avg holding, exposure. |
 
-**How:** Uses `BlockingScheduler` with `CronTrigger`. Converts trading days (mon/tue/etc) to cron day numbers. Each scan runs in its own `asyncio.run()` call.
+### DB (`db/`)
 
-**Debug tip:** If the scheduler seems to not fire, check timezone config and market hours. It only runs between `market_open` and `market_close` on `trading_days`.
+| File | Purpose |
+|---|---|
+| `db/engine.py` | `init_db(path)` creates SQLAlchemy engine + session factory + tables on first run. |
+| `db/models.py` | `Trade`, `Signal`, `DailyPnL`, `PortfolioSnapshot`, `ScanLog`. **`perm_id` and `exit_perm_id` indexed BigInteger** (cross-process dedup target). |
+| `db/repository.py` | Repos: `TradeRepository`, `SignalRepository`, `DailyPnLRepository`, `PortfolioSnapshotRepository`, `ScanLogRepository`. V2 methods: `create_submitted_buy(perm_id=...)`, `mark_pending_close(exit_perm_id=...)`, `confirm_buy_fill`, `confirm_close_fill`, `mark_cancelled`, `find_by_perm_id`, `find_by_exit_perm_id`, `get_pending_orders_for_today`. |
 
----
+### Notify (`notify/`)
 
-### Broker Module (`broker/`)
+Currently only used by `vibe-trade panic`. Telegram wiring into the daily jobs is Session F.
 
-| File | What It Does |
-|------|-------------|
-| `broker/base.py` | Abstract `BaseBroker` interface. All broker implementations must have: `connect()`, `disconnect()`, `get_account_summary()`, `get_positions()`, `place_market_order()`, `cancel_all_orders()` |
-| `broker/models.py` | Data classes: `AccountSummary` (account value, available cash, P&L), `Position` (symbol, qty, cost, market value), `OrderRequest` (symbol, side, qty), `OrderResult` (order ID, status, fill price) |
-| `broker/ib_broker.py` | Interactive Brokers implementation using `ib_async` library. Connects to TWS/Gateway. Paper = port 7497, Live = port 7496. Only handles account, positions, and orders — historical data comes from yfinance. |
+### Scratches (`scratches/`)
 
-**Debug tip:** If connection fails, check that TWS/IB Gateway is running and API connections are enabled in TWS settings (Edit > Global Configuration > API > Settings).
-
-**Debug tip:** `place_market_order()` waits up to 5 seconds (10 x 0.5s) for fill. If IB is slow, the order may show as "SUBMITTED" instead of "FILLED" — it's still working, just not confirmed yet.
-
-### Data Module (`data/`)
-
-| File | What It Does |
-|------|-------------|
-| `data/provider.py` | `DataProvider` — fetches OHLCV candles from Yahoo Finance via `yfinance`, returns pandas DataFrames. Runs synchronously in a worker thread via `asyncio.to_thread`. Timeframes: "1h", "4h" (maps to 1h), "1d". |
-| `data/universe.py` | Loads stock list. "sp500" returns ~500 hardcoded S&P 500 tickers. "custom" reads from `config.universe.custom_symbols`. |
-
-**Debug tip:** yfinance has no API key and generous rate limits — no need to throttle. Data is delayed ~15min for free tier, which is fine for swing trading.
-
-**Debug tip:** `universe.py` has a hardcoded S&P 500 list. It will go stale as companies are added/removed. Consider updating periodically.
-
-### Strategy Module (`strategy/`)
-
-| File | What It Does |
-|------|-------------|
-| `strategy/base.py` | Abstract `BaseStrategy` class + `SignalResult` dataclass + `SignalType` enum (BUY/SELL/HOLD). Every strategy must implement `name`, `required_candles`, and `evaluate()`. |
-| `strategy/indicators.py` | Technical indicators powered by backtrader. `compute_indicators()` runs all indicators in one pass. Also has convenience functions: `sma()`, `ema()`, `rsi()`, `atr()`, `macd()`, `bollinger_bands()`. Each convenience function runs a full backtrader Cerebro — for performance, use `compute_indicators()` when you need multiple indicators. |
-| `strategy/registry.py` | Maps config names to strategy classes. `load_strategies()` reads `config.strategy.active` list, instantiates each with its config params. To add a new strategy: add it to `STRATEGY_MAP` and add config wiring. |
-| `strategy/examples/ma_crossover.py` | Moving average crossover. BUY when fast SMA crosses above slow SMA and price > fast SMA. SELL when fast crosses below. Trailing stop set at `price - 2*ATR`. |
-| `strategy/examples/rsi_mean_revert.py` | RSI mean reversion. BUY when RSI crosses back above oversold level. SELL when RSI crosses back below overbought level. Trailing stop set at `price - 2*ATR`. |
-
-**Debug tip:** To add your own strategy:
-1. Create a new file in `strategy/examples/`
-2. Extend `BaseStrategy`, implement `name`, `required_candles`, `evaluate()`
-3. Add it to `STRATEGY_MAP` in `registry.py`
-4. Add config section in `config.py` and `config.example.toml`
-
-### Risk Module (`risk/`)
-
-| File | What It Does |
-|------|-------------|
-| `risk/manager.py` | `RiskManager` — two checks: `check_portfolio_limits()` (max positions, max exposure %) and `check_trade()` (already holding symbol? concentration too high?). Returns `RiskDecision(approved=True/False, reason="...")`. |
-| `risk/position_sizer.py` | `calculate_position_size()` — formula: `shares = (account * risk_pct / 100) / abs(entry - stop)`. Floors to whole shares. Caps at account value. Returns 0 if invalid. |
-| `risk/trailing.py` | `evaluate_trailing_stop()` — checks each open trade: if price <= stop, close it. If price went up, tighten stop (never loosen). Uses ATR-based or percentage-based method from config. |
-| `risk/panic.py` | `panic_close_all()` — cancels all open orders, then sells every position via market orders. Used by `vibe-trade panic`. |
-
-**Debug tip:** Position sizer returns 0 (skip trade) if entry == stop price or if the position would exceed account value. Check logs for "Position size is 0" messages.
-
-### Orders Module (`orders/`)
-
-| File | What It Does |
-|------|-------------|
-| `orders/executor.py` | `OrderExecutor` — takes a `SignalResult`, calculates position size, places a market order via the broker, records the trade in the database. For SELL signals, looks up the existing open trade for that symbol. |
-
-**Debug tip:** If a BUY signal has no `trailing_stop_price` in the SignalResult, the executor will skip it and log an error.
-
-### Notify Module (`notify/`)
-
-| File | What It Does |
-|------|-------------|
-| `notify/base.py` | Abstract `BaseNotifier` — four methods: `notify_trade()`, `notify_summary()`, `notify_error()`, `notify_panic()`. |
-| `notify/console.py` | `ConsoleNotifier` — logs to stdout via Python logging. Always available as fallback. |
-| `notify/telegram.py` | `TelegramNotifier` — sends messages to Telegram chat via bot API. Token/chat_id from config or env vars. Respects `notify_on_trade`, `notify_on_error`, `daily_summary` config flags. |
-
-**Debug tip:** If Telegram is enabled but token is empty, messages are silently skipped (logged as warning).
-
-### Database Module (`db/`)
-
-| File | What It Does |
-|------|-------------|
-| `db/engine.py` | Creates SQLAlchemy engine + session factory. `init_db()` creates all tables on first run. Uses SQLite at the path from `config.general.db_path`. |
-| `db/models.py` | Four ORM tables: `trades` (open/closed positions), `signals` (every signal generated), `daily_pnl` (one row per day), `scan_log` (one row per scan cycle). |
-| `db/repository.py` | CRUD classes: `TradeRepository` (create, close, update stop, list), `SignalRepository` (record, mark executed), `DailyPnLRepository` (upsert daily), `ScanLogRepository` (start, complete). |
-
-**Tables:**
-| Table | Key Columns | Purpose |
-|-------|-------------|---------|
-| `trades` | symbol, side, entry/exit price, quantity, trailing_stop, status, pnl | Track every trade open to close |
-| `signals` | symbol, strategy, signal_type, confidence, risk_approved, scan_id | Log every signal from every scan |
-| `daily_pnl` | date, realized/unrealized pnl, account_value | One row per trading day |
-| `scan_log` | scan_id, started/completed_at, symbols_scanned, errors | Audit trail for each scan cycle |
-
-**Debug tip:** Database file lives at `data/vibe_trade.db`. You can open it with any SQLite browser (DB Browser for SQLite, DBeaver, etc.) to inspect trades and signals.
+Standalone scripts that hit live IB paper for shape discovery + DB writes. Not pytest. See `CLAUDE.md` for the list and one-liner descriptions.
 
 ---
 
-## Known Issues & TODOs
+## CLI Commands
 
-| Issue | File | Line | Description |
-|-------|------|------|-------------|
-| TODO | `scanner.py` | 124 | `signal_id=0` — signal ID not wired up after recording |
-| MISSING | - | - | No Dockerfile |
-| MISSING | - | - | No retry logic for IB connection failures |
-| MISSING | - | - | No IB rate limiting for historical data requests |
-| MISSING | - | - | No graceful shutdown handling |
-| MISSING | - | - | No market holiday calendar |
+| Command | Phase | Purpose |
+|---|---|---|
+| `vibe-trade submit` | V2 daily | Place market orders (16:00). No DB writes. |
+| `vibe-trade record` | V2 daily | Persist today's fills (16:25). |
+| `vibe-trade reconcile` | V2 daily | Finalize statuses + snapshot (23:30). |
+| `vibe-trade backtest` | Validation | Simulate Donchian against historical data. |
+| `vibe-trade refresh-sp100` | Maintenance | Regenerate top-100 by market cap (rewrites `data/sp100_top.py`). |
+| `vibe-trade status` | Operator | Show open positions + today's P&L. |
+| `vibe-trade trades` | Operator | List recent trades. |
+| `vibe-trade config-check` | Operator | Validate config. |
+| `vibe-trade panic --yes` | Emergency | Close all positions + cancel orders. |
 
-**Status:**
-- 64 tests passing (`pytest tests/`) — 41 config + 23 database
-- Git repo initialized
-- Both strategies use `compute_indicators()` correctly (fixed from initial draft)
-- Full test registry at `tests/TEST_REGISTRY.csv`
+V1 commands `scan` and `start` were deleted in Session E.
+
+---
+
+## Status
+
+- 201 tests passing (full suite via `.venv/Scripts/python -m pytest`)
+- Sessions A–E (V2 build) + Session I (backtest framework) all merged on `main`
+- Bot can run end-to-end against IB paper but **has not yet been backtested** or run live
+- See `docs/ROADMAP.md` for what's next (Sessions F → onward)
 
 ---
 
@@ -618,4 +466,12 @@ flowchart TD
 3. `config/config.toml`
 4. Pydantic defaults in `config.py`
 
-See the [Config Loading Flow diagram](#config-loading-flow) above for the visual version.
+---
+
+## Common Debug Tips
+
+- **TWS connection fails:** check TWS is running on the right port (paper=7497, live=7496) and API is enabled (Edit → Global Configuration → API → Settings).
+- **Backtest is slow on first run:** yfinance downloads 8 years × 100 symbols of daily bars (~5–10 min). Subsequent runs hit the CSV cache.
+- **Cross-process orderId=0 issue:** if you're inspecting trades via a fresh client, only `permId` is reliable. Use `ib.fills()` for execution details.
+- **DB inspection:** `data/vibe_trade.db` (production) or `data/test_paper.db` (scratches). Both are SQLite — open with DB Browser for SQLite, DBeaver, or `sqlite3` CLI.
+- **Float-precision in sizing/metrics:** integer cents arithmetic in `position_sizer.size_position`; `pytest.approx` in metrics assertions.

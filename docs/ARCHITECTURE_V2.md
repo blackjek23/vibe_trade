@@ -1,8 +1,32 @@
 # Architecture V2 — Three-Phase Daily Trading Flow
 
-**Status:** Planning
+**Status:** Implemented (Sessions A–E merged on `main`, last update 2026-05-02)
 **Owner:** Jeki
-**Last updated:** 2026-04-20
+
+> **Reading note:** the original planning document is preserved below for historical
+> context. Reality diverged from the plan in a few places during implementation —
+> see "Implementation deltas" immediately below. For the as-built picture, read
+> `PROJECT_MAP.md` and `PROJECT_MASTER_STATE.md`.
+
+---
+
+## Implementation deltas (where reality diverged from the plan)
+
+| Plan said | What actually shipped | Why |
+|---|---|---|
+| Trailing stops evaluated at 16:00 against yesterday's low | **No trailing stops at all.** Exits come purely from strategy SELL signals on the daily bar. | Simpler. Donchian's symmetric breakdown signal is the exit. Removed `trailing_stop` columns + `TrailingStopConfig` in Session B. |
+| Add `broker.get_order_status(ib_order_id)` for reconcile | **Not added.** Reconcile drives off `ib.trades().orderStatus` + `ib.fills()` directly. | Live diagnostic showed it's redundant — `orderStatus.status` survives reconnect. |
+| Dedup orders by `ib_order_id` | **Dedup by `permId`** via new indexed `perm_id` / `exit_perm_id` columns on `Trade`. | Live diagnostic on 2026-04-27: a fresh process sees `order.totalQuantity=0`, `orderId=0`, `clientId=0` for completed orders — only `permId` survives. Forced a schema addition. |
+| Generic strategy registry, multiple strategies in `StrategyConfig.active` | **Single hardcoded strategy:** Donchian breakout (N=20, symmetric, excluding eval bar). `StrategyConfig` deleted. | First iteration is single-strategy. Session L (deferred) restores multi-strategy via `Order.orderRef`. |
+| `total_pnl` column on `daily_pnl` | **Removed.** Compute `realized + unrealized` on read. | Redundant. Session A. |
+| Single shared client_id | **Three hardcoded:** submit=1, record=2, reconcile=3 (constants in `jobs/submit.py`). | Audit trail via `fill.execution.clientId`. IB scopes today's trades/fills by account, not client_id, so cross-client visibility is fine. |
+| Position sizing tied to risk-per-share (entry − stop) | **Fixed % of net_liquidation:** 1.8% × 50-position cap. Floor to whole shares via integer cents arithmetic. | No trailing stops = no risk-per-share input. Locked decision in Session B. |
+
+The original plan below describes the architecture as designed. The deltas above
+describe what was actually built. Both are useful — the plan reads as intent,
+PROJECT_MAP.md reads as implementation.
+
+---
 
 ## Why this change
 
