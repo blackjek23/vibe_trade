@@ -238,6 +238,15 @@ def test_format_reconcile_msg_no_pnl_row():
     assert "Account:" not in msg
 
 
+def test_config_check_does_not_reference_nonexistent_strategy_field():
+    """config-check must not reference config.strategy.active — AppConfig has no strategy field."""
+    import inspect
+    from vibe_trade import cli
+
+    source = inspect.getsource(cli.config_check)
+    assert "config.strategy.active" not in source
+
+
 def test_setup_logging_no_file_when_log_file_none():
     from vibe_trade.cli import _setup_logging
 

@@ -827,7 +827,6 @@ def config_check(
         console.print(f"  Mode: {config.general.mode}")
         console.print(f"  Broker: IB @ {config.broker.host}:{config.broker.get_port(config.general.mode)}")
         console.print(f"  Universe: {config.universe.source}")
-        console.print(f"  Strategies: {config.strategy.active}")
         console.print(f"  Max positions: {config.risk.max_open_positions}")
         console.print(f"  Telegram: {'enabled' if config.telegram.enabled else 'disabled'}")
     except Exception as e:
