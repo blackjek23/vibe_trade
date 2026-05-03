@@ -214,3 +214,5 @@ test_backtest_plot.py,TestPlot,test_png_with_two_benchmarks,PNG created with SPY
 test_db.py,unit,test_get_trades_opened_today,Filter trades by entry_time on given date and status OPEN/PARTIALLY_FILLED
 test_db.py,unit,test_get_trades_closed_today,Filter trades by exit_time on given date and status CLOSED
 test_db.py,unit,test_dailypnl_get_by_date,Read-only DailyPnL lookup by date returns None if missing
+test_notify_integration.py,unit,test_get_notifier_returns_console_when_disabled,Telegram off -> ConsoleNotifier returned
+test_notify_integration.py,unit,test_get_notifier_returns_telegram_when_enabled,Telegram on -> TelegramNotifier returned

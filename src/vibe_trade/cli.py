@@ -29,6 +29,20 @@ def _setup_logging(level: str, log_file: str | None = None) -> None:
     logging.basicConfig(level=getattr(logging, level, logging.INFO), format=fmt, handlers=handlers)
 
 
+def _get_notifier(config):
+    """Return TelegramNotifier when enabled, ConsoleNotifier otherwise.
+
+    The Console fallback is what `panic` and the V2 jobs degrade to in dev
+    when Telegram credentials aren't set.
+    """
+    from vibe_trade.notify.console import ConsoleNotifier
+    from vibe_trade.notify.telegram import TelegramNotifier
+
+    if config.telegram.enabled:
+        return TelegramNotifier(config.telegram)
+    return ConsoleNotifier()
+
+
 @app.command()
 def submit(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
