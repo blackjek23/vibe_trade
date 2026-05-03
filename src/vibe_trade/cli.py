@@ -118,6 +118,53 @@ def _format_record_msg(result, today) -> str:
     return "\n".join(lines)
 
 
+def _format_reconcile_msg(result, opened, closed, pnl, today) -> str:
+    """Build the daily summary message. Pure function.
+
+    `opened`: list of Trade rows whose entry_time is today (BUYs only — V2 has no shorts).
+    `closed`: list of Trade rows whose exit_time is today (each with `pnl` set).
+    `pnl`: DailyPnL row for `today`, or None if reconcile didn't write one.
+    """
+    lines = [
+        f"[DAILY SUMMARY] {today.isoformat()}",
+        f"Opened: {result.opened}  Closed: {result.closed}",
+        "",
+    ]
+
+    if not opened and not closed:
+        lines.append("No trades today.")
+    else:
+        lines.append("```")
+        lines.append("Symbol  Side  Qty  P&L")
+        lines.append("-" * 26)
+        for t in opened:
+            lines.append(f"{t.symbol:<7} BUY  {t.filled_quantity:>4}")
+        for t in closed:
+            sign = "+" if (t.pnl or 0) >= 0 else "-"
+            amount = abs(t.pnl or 0)
+            pnl_str = f"{sign}${amount:,.2f}"
+            lines.append(
+                f"{t.symbol:<7} SELL {t.filled_quantity:>4}  {pnl_str}"
+            )
+        lines.append("```")
+
+    if pnl is not None:
+        sign = "+" if (pnl.realized_pnl or 0) >= 0 else "-"
+        rp = abs(pnl.realized_pnl or 0)
+        lines.append("")
+        lines.append(f"Realized P&L: {sign}${rp:,.2f}")
+        if pnl.account_value is not None:
+            lines.append(f"Account:    ${pnl.account_value:,.2f}")
+
+    if result.errors:
+        lines.append("")
+        lines.append(f"{len(result.errors)} error(s):")
+        for err in result.errors[:10]:
+            lines.append(f"  - {err}")
+
+    return "\n".join(lines)
+
+
 @app.command()
 def submit(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
@@ -316,6 +363,8 @@ def reconcile(
 
 
 async def _run_reconcile_cli(config) -> None:
+    from datetime import date as _date
+
     from vibe_trade.broker.ib_broker import IBBroker
     from vibe_trade.db.engine import init_db as _init
     from vibe_trade.db.repository import (
@@ -330,6 +379,7 @@ async def _run_reconcile_cli(config) -> None:
     broker_config.client_id = RECONCILE_CLIENT_ID
     broker = IBBroker(broker_config, mode=config.general.mode)
     session_factory = _init(config.general.db_path)
+    notifier = _get_notifier(config)
 
     console.print(
         f"[bold]Reconcile[/bold] mode={config.general.mode} "
@@ -340,12 +390,19 @@ async def _run_reconcile_cli(config) -> None:
     session = session_factory()
     try:
         await asyncio.sleep(1.0)
+        trade_repo = TradeRepository(session)
+        daily_repo = DailyPnLRepository(session)
         result = await run_reconcile(
             broker=broker,
-            trade_repo=TradeRepository(session),
+            trade_repo=trade_repo,
             snap_repo=PortfolioSnapshotRepository(session),
-            daily_repo=DailyPnLRepository(session),
+            daily_repo=daily_repo,
         )
+        # Read for the summary message before closing the session
+        today = _date.today()
+        opened_today = trade_repo.get_trades_opened_today(today)
+        closed_today = trade_repo.get_trades_closed_today(today)
+        daily_row = daily_repo.get_by_date(today)
     finally:
         session.close()
         await broker.disconnect()
@@ -364,6 +421,12 @@ async def _run_reconcile_cli(config) -> None:
         console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
         for e in result.errors[:10]:
             console.print(f"  - {e}")
+
+    msg = _format_reconcile_msg(result, opened_today, closed_today, daily_row, today)
+    if result.errors:
+        await notifier.notify_error(msg)
+    else:
+        await notifier.notify_summary(msg)
 
 
 @app.command(name="refresh-sp100")

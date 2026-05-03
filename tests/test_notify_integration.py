@@ -172,6 +172,72 @@ def test_format_record_msg_with_errors():
     assert "perm_id=42" in msg
 
 
+def _make_trade(symbol, side, qty, **kwargs):
+    """Lightweight builder: a stand-in shaped like vibe_trade.db.models.Trade."""
+    from types import SimpleNamespace
+    return SimpleNamespace(symbol=symbol, side=side, filled_quantity=qty, **kwargs)
+
+
+def test_format_reconcile_msg_with_trades():
+    from types import SimpleNamespace
+    from vibe_trade.cli import _format_reconcile_msg
+    from vibe_trade.jobs.reconcile import ReconcileResult
+
+    opened = [
+        _make_trade("AAPL", "BUY", 10, pnl=None),
+        _make_trade("MSFT", "BUY", 5, pnl=None),
+    ]
+    closed = [
+        _make_trade("GOOGL", "BUY", 3, pnl=142.50),
+        _make_trade("NVDA", "BUY", 2, pnl=-18.20),
+    ]
+    pnl = SimpleNamespace(realized_pnl=124.30, account_value=102_450.0)
+    result = ReconcileResult(opened=2, closed=2)
+
+    msg = _format_reconcile_msg(result, opened, closed, pnl, date(2026, 5, 3))
+    assert "[DAILY SUMMARY] 2026-05-03" in msg
+    assert "Opened: 2" in msg
+    assert "Closed: 2" in msg
+    assert "```" in msg
+    assert "AAPL" in msg and "BUY" in msg
+    assert "GOOGL" in msg and "+$142.50" in msg
+    assert "NVDA" in msg and "-$18.20" in msg
+    assert "Realized P&L: +$124.30" in msg
+    assert "Account:" in msg and "$102,450.00" in msg
+
+
+def test_format_reconcile_msg_no_trades():
+    from vibe_trade.cli import _format_reconcile_msg
+    from vibe_trade.jobs.reconcile import ReconcileResult
+
+    result = ReconcileResult()
+    msg = _format_reconcile_msg(result, [], [], None, date(2026, 5, 3))
+    assert "No trades today." in msg
+
+
+def test_format_reconcile_msg_errors():
+    from vibe_trade.cli import _format_reconcile_msg
+    from vibe_trade.jobs.reconcile import ReconcileResult
+
+    result = ReconcileResult(errors=["perm_id=99: SomeError(...)"])
+    msg = _format_reconcile_msg(result, [], [], None, date(2026, 5, 3))
+    assert "1 error(s):" in msg
+    assert "perm_id=99" in msg
+
+
+def test_format_reconcile_msg_no_pnl_row():
+    """When DailyPnL row is missing, omit totals lines but still render trades."""
+    from vibe_trade.cli import _format_reconcile_msg
+    from vibe_trade.jobs.reconcile import ReconcileResult
+
+    closed = [_make_trade("X", "BUY", 1, pnl=10.0)]
+    result = ReconcileResult(closed=1)
+    msg = _format_reconcile_msg(result, [], closed, None, date(2026, 5, 3))
+    assert "X" in msg
+    assert "Realized P&L:" not in msg
+    assert "Account:" not in msg
+
+
 def test_setup_logging_no_file_when_log_file_none():
     from vibe_trade.cli import _setup_logging
 

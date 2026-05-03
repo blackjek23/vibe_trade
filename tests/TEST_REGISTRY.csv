@@ -225,3 +225,7 @@ test_notify_integration.py,unit,test_format_submit_msg_with_errors,Submit messag
 test_notify_integration.py,unit,test_format_submit_msg_entries_skipped,Submit message shows cap_reason when entries phase skipped
 test_notify_integration.py,unit,test_format_record_msg,Record message renders BUY/SELL counts with date header
 test_notify_integration.py,unit,test_format_record_msg_with_errors,Record message lists errors when present
+test_notify_integration.py,unit,test_format_reconcile_msg_with_trades,Reconcile message renders monospace table; BUYs no P&L; SELLs with signed P&L
+test_notify_integration.py,unit,test_format_reconcile_msg_no_trades,Reconcile message shows 'No trades today.' when opened+closed both empty
+test_notify_integration.py,unit,test_format_reconcile_msg_errors,Reconcile message appends error list when result.errors present
+test_notify_integration.py,unit,test_format_reconcile_msg_no_pnl_row,Reconcile message omits totals lines when DailyPnL row is None
