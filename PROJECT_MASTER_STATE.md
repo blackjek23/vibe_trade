@@ -4,9 +4,9 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-02 (end of Session I)
-**HEAD commit:** `d610527` Static SP100 universe + refresh-sp100 CLI for backtest reproducibility
-**Tests:** 201 passing
+**Last updated:** 2026-05-03 (end of Session I — backtest run + benchmarks + plot)
+**HEAD commit:** `dc8dd3a` Backtest benchmarks (SPY/QQQ) + equity curve plot (212 tests)
+**Tests:** 212 passing
 **Branch:** `main` — synced with `origin/main`
 
 ---
@@ -50,10 +50,10 @@ src/vibe_trade/
 ├── notify/          Telegram + console (currently only used by panic)
 ├── risk/            manager.py, position_sizer.py, panic.py
 ├── strategy/        base.py, examples/donchian.py
-├── backtest/        data.py, engine.py, metrics.py
+├── backtest/        data.py, engine.py, metrics.py, plot.py
 └── cli.py           typer commands
 
-tests/               201 tests across all modules + TEST_REGISTRY.csv index
+tests/               212 tests across all modules + TEST_REGISTRY.csv index
 docs/                ARCHITECTURE_V2.md, ROADMAP.md
 scratches/           live IB-paper diagnostics + DB-write scripts (not pytest)
 config/              config.example.toml
@@ -78,10 +78,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **E** — Delete V1 | `65dcbb9` | Removed `scanner.py`, `scheduler.py`, `orders/`, `risk/trailing.py`, V1 strategy examples + registry + indicators. CLI commands `scan`/`start` removed. |
 | **I** — Backtest framework | `991d257` | `src/vibe_trade/backtest/` (data + engine + metrics). `vibe-trade backtest` command. ROADMAP.md added. |
 | (Session I follow-up) | `d610527` | Static `sp100_top.py` (top 100 by mcap, snapshot 2026-05-02) + `vibe-trade refresh-sp100` for quarterly refresh. |
-
-### Partially implemented (framework only, not run)
-
-- **Backtest:** code is wired and 37 unit tests green. The actual run against `2018-01-01 → 2026-01-01` has **not been executed** — that's the next concrete deliverable. First run will fetch ~8 years × 100 symbols of yfinance bars (~5–10 min one-time, then cached).
+| (Session I — backtest run) | `dc8dd3a` | First backtest run complete. SPY/QQQ benchmarks + backtrader-style equity curve plot. 212 tests. |
 
 ### Not started (per ROADMAP)
 
@@ -181,7 +178,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ```bash
 # Tests
-.venv/Scripts/python -m pytest                       # full suite (~1s, 201 tests)
+.venv/Scripts/python -m pytest                       # full suite (~2s, 212 tests)
 .venv/Scripts/python -m pytest tests/test_donchian.py -v
 
 # Daily V2 commands (per cron schedule, can also run manually)
@@ -227,26 +224,27 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ## 7. Session Hand-off — start here next time
 
+### Backtest results (2018-01-01 → 2026-01-01, top-100, 4%, 25-cap)
+
+| Metric | Strategy | SPY B&H | QQQ B&H |
+|---|---|---|---|
+| Total return | +253% | +187% | +308% |
+| CAGR | +17.1% | +14.1% | +19.3% |
+| Sharpe | 1.14 | 0.78 | 0.85 |
+| Max drawdown | -20.5% | -33.7% | -35.1% |
+
+**Verdict:** Strategy beats both benchmarks on risk-adjusted basis (Sharpe 1.14 vs 0.78/0.85) with half the drawdown. Trails QQQ on raw return but with far less pain. **Profitable — proceed forward.**
+
 ### Immediate next concrete deliverable
 
-**Run the backtest.** The framework is built but unrun. Command:
+**Session F** — Telegram notifications + structured logging. Per ROADMAP:
 
-```bash
-.venv/Scripts/python -m vibe_trade backtest \
-    --start 2018-01-01 --end 2026-01-01 \
-    --top-n 100 --pct 0.04 --max-positions 25
-```
+- Wire `notify/telegram.py` into submit/record/reconcile jobs
+- Daily summary at 23:35
+- Structured logging + log rotation
 
-Expected duration: ~5–10 min on first run (fetches yfinance bars), seconds on rerun. Outputs: `backtests/<timestamp>/{equity.csv, trades.csv, metrics.json}` + a console summary table.
+### After Session F (per ROADMAP: F → G → H → triage)
 
-**After the run, look at the metrics together** — does Donchian + 4% × 25 produce acceptable Sharpe / drawdown / win rate? This decides everything downstream:
-
-- **If profitable:** proceed to Session F (notifications) per ROADMAP.
-- **If not:** tune parameters or pick a different strategy *before* spending effort on infrastructure.
-
-### After backtest results are in (per ROADMAP recommendation: I → F → G → H → triage)
-
-- **Session F:** Wire `notify/telegram.py` into submit/record/reconcile. Daily summary at 23:35. Structured logging + log rotation.
 - **Session G:** `deploy/crontab.example` + `deploy/systemd-timer/`. Smoke-test script.
 - **Session H:** Live paper week — observation only, no coding. Triage findings.
 
