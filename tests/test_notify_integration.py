@@ -106,6 +106,52 @@ def test_setup_logging_file_handler_emits_json(tmp_path):
     assert "time" in payload
 
 
+from datetime import date
+
+
+def test_format_submit_msg_normal():
+    from vibe_trade.cli import _format_submit_msg
+    from vibe_trade.jobs.submit import SubmitResult
+
+    result = SubmitResult(
+        universe_size=100, held_count=5,
+        exits_evaluated=5, exits_signaled=2, exits_placed=2, exits_failed=0,
+        entries_evaluated=95, entries_signaled=3, entries_placed=3,
+        entries_skipped_sizing=0, entries_failed=0,
+    )
+    msg = _format_submit_msg(result, date(2026, 5, 3))
+    assert "[SUBMIT] 2026-05-03" in msg
+    assert "Exits:   2 placed, 0 failed" in msg
+    assert "Entries: 3 placed, 0 failed" in msg
+    assert "error" not in msg.lower()
+
+
+def test_format_submit_msg_with_errors():
+    from vibe_trade.cli import _format_submit_msg
+    from vibe_trade.jobs.submit import SubmitResult
+
+    result = SubmitResult(
+        exits_placed=2, exits_failed=1, entries_placed=3,
+        errors=["exit AAPL: TimeoutError(...)", "exit MSFT: ValueError(...)"],
+    )
+    msg = _format_submit_msg(result, date(2026, 5, 3))
+    assert "2 error(s):" in msg
+    assert "exit AAPL: TimeoutError" in msg
+    assert "exit MSFT: ValueError" in msg
+
+
+def test_format_submit_msg_entries_skipped():
+    from vibe_trade.cli import _format_submit_msg
+    from vibe_trade.jobs.submit import SubmitResult
+
+    result = SubmitResult(
+        exits_evaluated=3, exits_placed=1,
+        entries_phase_skipped=True, cap_reason="At max positions (50)",
+    )
+    msg = _format_submit_msg(result, date(2026, 5, 3))
+    assert "Entries phase skipped: At max positions (50)" in msg
+
+
 def test_setup_logging_no_file_when_log_file_none():
     from vibe_trade.cli import _setup_logging
 

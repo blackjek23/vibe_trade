@@ -220,3 +220,6 @@ test_notify_integration.py,unit,test_setup_logging_stream_handler_is_plain_text,
 test_notify_integration.py,unit,test_setup_logging_file_handler_is_rotating,File handler is TimedRotatingFileHandler when=midnight backupCount=7
 test_notify_integration.py,unit,test_setup_logging_file_handler_emits_json,Log records produce parseable JSON lines
 test_notify_integration.py,unit,test_setup_logging_no_file_when_log_file_none,log_file=None means no file handler attached
+test_notify_integration.py,unit,test_format_submit_msg_normal,Submit message renders Exits/Entries counts with date header
+test_notify_integration.py,unit,test_format_submit_msg_with_errors,Submit message lists up to 10 errors when present
+test_notify_integration.py,unit,test_format_submit_msg_entries_skipped,Submit message shows cap_reason when entries phase skipped

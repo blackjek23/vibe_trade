@@ -85,6 +85,25 @@ def _get_notifier(config):
     return ConsoleNotifier()
 
 
+def _format_submit_msg(result, today) -> str:
+    """Build the Telegram message for a submit run. Pure function."""
+    lines = [f"[SUBMIT] {today.isoformat()}"]
+    lines.append(
+        f"Exits:   {result.exits_placed} placed, {result.exits_failed} failed"
+    )
+    if result.entries_phase_skipped:
+        lines.append(f"Entries phase skipped: {result.cap_reason}")
+    else:
+        lines.append(
+            f"Entries: {result.entries_placed} placed, {result.entries_failed} failed"
+        )
+    if result.errors:
+        lines.append(f"{len(result.errors)} error(s):")
+        for err in result.errors[:10]:
+            lines.append(f"  - {err}")
+    return "\n".join(lines)
+
+
 @app.command()
 def submit(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
@@ -101,6 +120,8 @@ def submit(
 
 
 async def _run_submit_cli(config) -> None:
+    from datetime import date as _date
+
     from vibe_trade.broker.ib_broker import IBBroker
     from vibe_trade.data.provider import DataProvider
     from vibe_trade.data.universe import load_universe
@@ -113,6 +134,7 @@ async def _run_submit_cli(config) -> None:
 
     broker = IBBroker(broker_config, mode=config.general.mode)
     universe = load_universe(config.universe)
+    notifier = _get_notifier(config)
 
     console.print(
         f"[bold]Submit[/bold] mode={config.general.mode} "
@@ -138,6 +160,12 @@ async def _run_submit_cli(config) -> None:
         await broker.disconnect()
 
     _print_submit_summary(result)
+
+    msg = _format_submit_msg(result, _date.today())
+    if result.errors:
+        await notifier.notify_error(msg)
+    else:
+        await notifier.notify_summary(msg)
 
 
 def _print_submit_summary(result) -> None:
