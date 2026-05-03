@@ -37,6 +37,15 @@ class BacktestMetrics:
     exposure_pct: float    # % of trading days with at least one open position
 
 
+@dataclass
+class BenchmarkMetrics:
+    symbol: str
+    total_return_pct: float
+    cagr_pct: float
+    sharpe: float
+    max_drawdown_pct: float
+
+
 def compute_metrics(result: BacktestResult) -> BacktestMetrics:
     eq = result.equity_curve
     trades = result.trades
@@ -150,6 +159,49 @@ def _count_exposed_days(trades, all_dates: pd.DatetimeIndex) -> int:
 def _next_day(d):
     from datetime import timedelta
     return d + timedelta(days=1)
+
+
+def compute_benchmark(symbol: str, close_prices: pd.Series) -> BenchmarkMetrics:
+    """Buy-and-hold metrics for a benchmark ETF (e.g. SPY, QQQ).
+
+    `close_prices` is a DatetimeIndex-ed Series of daily closes, already
+    sliced to the backtest date range.
+    """
+    if len(close_prices) < 2:
+        return BenchmarkMetrics(
+            symbol=symbol, total_return_pct=0.0, cagr_pct=0.0,
+            sharpe=0.0, max_drawdown_pct=0.0,
+        )
+
+    total_return_pct = (close_prices.iloc[-1] / close_prices.iloc[0] - 1.0) * 100.0
+
+    span_days = (close_prices.index[-1] - close_prices.index[0]).days
+    if span_days > 0:
+        years = span_days / 365.25
+        cagr_pct = ((close_prices.iloc[-1] / close_prices.iloc[0]) ** (1 / years) - 1) * 100.0
+    else:
+        cagr_pct = 0.0
+
+    daily_returns = close_prices.pct_change().dropna()
+    if len(daily_returns) > 1 and daily_returns.std() > 0:
+        sharpe = float(
+            daily_returns.mean() / daily_returns.std()
+            * math.sqrt(TRADING_DAYS_PER_YEAR)
+        )
+    else:
+        sharpe = 0.0
+
+    running_peak = close_prices.cummax()
+    drawdown = close_prices / running_peak - 1.0
+    max_drawdown_pct = float(drawdown.min() * 100.0)
+
+    return BenchmarkMetrics(
+        symbol=symbol,
+        total_return_pct=float(total_return_pct),
+        cagr_pct=float(cagr_pct),
+        sharpe=sharpe,
+        max_drawdown_pct=max_drawdown_pct,
+    )
 
 
 # Silence the numpy import lint -- kept intentionally for stability across

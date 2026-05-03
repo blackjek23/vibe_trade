@@ -1,4 +1,4 @@
-"""Tests for vibe_trade.backtest.metrics.compute_metrics.
+"""Tests for vibe_trade.backtest.metrics (compute_metrics + compute_benchmark).
 
 Builds BacktestResult fixtures with hand-crafted equity curves + trade lists
 and asserts each computed metric. No engine, no IB, no DB.
@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from vibe_trade.backtest.engine import BacktestResult, BacktestTrade
-from vibe_trade.backtest.metrics import compute_metrics
+from vibe_trade.backtest.metrics import compute_benchmark, compute_metrics
 
 
 def _curve(values: list[float], start: str = "2024-01-01") -> pd.Series:
@@ -174,3 +174,51 @@ class TestExposure:
         m = compute_metrics(_result(eq, trades=trades))
         # 5 days of overlap with the curve out of 10 -> 50%.
         assert abs(m.exposure_pct - 50.0) < 1e-6
+
+
+def _prices(values: list[float], start: str = "2024-01-01") -> pd.Series:
+    return pd.Series(
+        values,
+        index=pd.date_range(start, periods=len(values), freq="D"),
+        dtype=float,
+    )
+
+
+class TestBenchmark:
+    def test_total_return(self):
+        # 100 -> 150 = +50%
+        bm = compute_benchmark("SPY", _prices([100.0, 120.0, 150.0]))
+        assert abs(bm.total_return_pct - 50.0) < 1e-6
+        assert bm.symbol == "SPY"
+
+    def test_negative_return(self):
+        bm = compute_benchmark("QQQ", _prices([100.0, 80.0]))
+        assert bm.total_return_pct == pytest.approx(-20.0)
+
+    def test_cagr_over_one_year(self):
+        prices = [100.0] + [100.0] * 363 + [110.0]
+        bm = compute_benchmark("SPY", _prices(prices))
+        assert abs(bm.cagr_pct - 10.0) < 0.5
+
+    def test_sharpe_positive_for_uptrend(self):
+        prices = [100.0 * (1.001 ** i) for i in range(252)]
+        bm = compute_benchmark("SPY", _prices(prices))
+        assert bm.sharpe > 5.0
+
+    def test_sharpe_zero_for_flat(self):
+        bm = compute_benchmark("SPY", _prices([100.0] * 50))
+        assert bm.sharpe == 0.0
+
+    def test_max_drawdown(self):
+        # 100 -> 120 (peak) -> 90 (DD = -25%) -> 110
+        bm = compute_benchmark("SPY", _prices([100.0, 120.0, 90.0, 110.0]))
+        assert abs(bm.max_drawdown_pct - (-25.0)) < 1e-6
+
+    def test_single_price_returns_zeros(self):
+        bm = compute_benchmark("SPY", _prices([100.0]))
+        assert bm.total_return_pct == 0.0
+        assert bm.sharpe == 0.0
+
+    def test_empty_series_returns_zeros(self):
+        bm = compute_benchmark("SPY", pd.Series([], dtype=float))
+        assert bm.total_return_pct == 0.0

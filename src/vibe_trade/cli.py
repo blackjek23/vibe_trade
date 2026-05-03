@@ -397,6 +397,25 @@ def _run_backtest_cli(
     )
     metrics = compute_metrics(result)
 
+    # ---------------------------------------------------------- benchmarks
+    from vibe_trade.backtest.data import load_bars as _load_bars
+    from vibe_trade.backtest.metrics import BenchmarkMetrics, compute_benchmark
+
+    BENCH_SYMBOLS = ["SPY", "QQQ"]
+    console.print("Computing benchmarks (SPY, QQQ buy-and-hold)...")
+    bench_paths = fetch_and_cache_bars(
+        BENCH_SYMBOLS, start=start, end=end, force_refresh=force_refresh,
+    )
+    benchmarks: list[BenchmarkMetrics] = []
+    bench_closes: dict[str, "pd.Series"] = {}
+    for sym in BENCH_SYMBOLS:
+        if sym not in bench_paths:
+            continue
+        bench_df = _load_bars(sym, start=start, end=end)
+        if not bench_df.empty:
+            bench_closes[sym] = bench_df["close"]
+            benchmarks.append(compute_benchmark(sym, bench_df["close"]))
+
     # ---------------------------------------------------------- output dir
     out = Path(output_dir) if output_dir else (
         Path("backtests") / _dt.now().strftime("%Y%m%d_%H%M%S")
@@ -429,26 +448,67 @@ def _run_backtest_cli(
             "skipped_buys_no_data": result.skipped_buys_no_data,
         },
         "metrics": _metrics_to_jsonable(asdict(metrics)),
+        "benchmarks": {
+            bm.symbol: asdict(bm) for bm in benchmarks
+        },
     }
     (out / "metrics.json").write_text(json.dumps(summary, indent=2))
+
+    # plot
+    from vibe_trade.backtest.plot import save_backtest_plot
+    png_path = save_backtest_plot(
+        equity_curve=result.equity_curve,
+        benchmarks=bench_closes,
+        output_path=out,
+        starting_equity=equity,
+    )
+    console.print(f"  [green]saved plot -> {png_path.name}[/green]")
 
     # ---------------------------------------------------------- summary
     table = Table(title="Backtest Result")
     table.add_column("Metric", style="cyan")
-    table.add_column("Value", justify="right")
-    table.add_row("Total return", f"{metrics.total_return_pct:+.2f}%")
-    table.add_row("CAGR", f"{metrics.cagr_pct:+.2f}%")
-    table.add_row("Sharpe (annual)", f"{metrics.sharpe:.2f}")
-    table.add_row("Max drawdown", f"{metrics.max_drawdown_pct:.2f}%")
-    table.add_row("# trades", str(metrics.n_trades))
-    table.add_row("Win rate", f"{metrics.win_rate * 100:.1f}%")
+    table.add_column("Strategy", justify="right")
+    for bm in benchmarks:
+        table.add_column(f"{bm.symbol} B&H", justify="right")
+    table.add_row(
+        "Total return",
+        f"{metrics.total_return_pct:+.2f}%",
+        *[f"{bm.total_return_pct:+.2f}%" for bm in benchmarks],
+    )
+    table.add_row(
+        "CAGR",
+        f"{metrics.cagr_pct:+.2f}%",
+        *[f"{bm.cagr_pct:+.2f}%" for bm in benchmarks],
+    )
+    table.add_row(
+        "Sharpe (annual)",
+        f"{metrics.sharpe:.2f}",
+        *[f"{bm.sharpe:.2f}" for bm in benchmarks],
+    )
+    table.add_row(
+        "Max drawdown",
+        f"{metrics.max_drawdown_pct:.2f}%",
+        *[f"{bm.max_drawdown_pct:.2f}%" for bm in benchmarks],
+    )
+    table.add_row("# trades", str(metrics.n_trades), *["--" for _ in benchmarks])
+    table.add_row("Win rate", f"{metrics.win_rate * 100:.1f}%", *["--" for _ in benchmarks])
     pf_str = "inf" if metrics.profit_factor == float("inf") else f"{metrics.profit_factor:.2f}"
-    table.add_row("Profit factor", pf_str)
-    table.add_row("Avg win / loss", f"${metrics.avg_win:,.2f} / ${metrics.avg_loss:,.2f}")
-    table.add_row("Avg holding (days)", f"{metrics.avg_holding_days:.1f}")
-    table.add_row("Exposure", f"{metrics.exposure_pct:.1f}%")
-    table.add_row("Open at end", str(result.open_positions_at_end))
+    table.add_row("Profit factor", pf_str, *["--" for _ in benchmarks])
+    table.add_row("Avg win / loss", f"${metrics.avg_win:,.2f} / ${metrics.avg_loss:,.2f}", *["--" for _ in benchmarks])
+    table.add_row("Avg holding (days)", f"{metrics.avg_holding_days:.1f}", *["--" for _ in benchmarks])
+    table.add_row("Exposure", f"{metrics.exposure_pct:.1f}%", *["--" for _ in benchmarks])
+    table.add_row("Open at end", str(result.open_positions_at_end), *["--" for _ in benchmarks])
     console.print(table)
+
+    # ---------------------------------------------------------- verdict
+    for bm in benchmarks:
+        diff = metrics.total_return_pct - bm.total_return_pct
+        direction = "higher" if diff > 0 else "lower"
+        color = "green" if diff > 0 else "red"
+        console.print(
+            f"  Strategy vs {bm.symbol}: [{color}]{diff:+.2f}pp {direction}[/{color}]"
+        )
+
     console.print(f"\n[dim]Outputs: {out.resolve()}[/dim]")
 
 

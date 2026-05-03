@@ -200,3 +200,14 @@ test_backtest_metrics.py,TestTrades,test_avg_holding_days,Avg holding period in 
 test_backtest_metrics.py,TestExposure,test_open_position_at_end_counted,Position open at end -> 100% exposure heuristic
 test_backtest_metrics.py,TestExposure,test_no_trades_no_open_no_exposure,No trades + no open positions -> 0% exposure
 test_backtest_metrics.py,TestExposure,test_partial_exposure,Trade open 5/10 days -> 50% exposure
+test_backtest_metrics.py,TestBenchmark,test_total_return,Buy-and-hold total return computed correctly
+test_backtest_metrics.py,TestBenchmark,test_negative_return,Negative buy-and-hold return
+test_backtest_metrics.py,TestBenchmark,test_cagr_over_one_year,CAGR for ~1-year price series
+test_backtest_metrics.py,TestBenchmark,test_sharpe_positive_for_uptrend,Positive Sharpe for steady uptrend
+test_backtest_metrics.py,TestBenchmark,test_sharpe_zero_for_flat,Flat prices -> Sharpe 0
+test_backtest_metrics.py,TestBenchmark,test_max_drawdown,Max drawdown from peak to trough
+test_backtest_metrics.py,TestBenchmark,test_single_price_returns_zeros,Single price point -> all zeros
+test_backtest_metrics.py,TestBenchmark,test_empty_series_returns_zeros,Empty series -> all zeros
+test_backtest_plot.py,TestPlot,test_png_created,PNG created with one benchmark overlay
+test_backtest_plot.py,TestPlot,test_png_without_benchmarks,PNG created with no benchmarks
+test_backtest_plot.py,TestPlot,test_png_with_two_benchmarks,PNG created with SPY + QQQ benchmarks
