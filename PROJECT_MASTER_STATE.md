@@ -4,10 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-03 (end of Session I — backtest run + benchmarks + plot)
-**HEAD commit:** `dc8dd3a` Backtest benchmarks (SPY/QQQ) + equity curve plot (212 tests)
-**Tests:** 212 passing
-**Branch:** `main` — synced with `origin/main`
+**Last updated:** 2026-05-03 (end of Session F — Telegram notifications + JSON-rotating logs)
+**HEAD commit:** `f1eb3b3` Fix config-check: remove reference to non-existent strategy field (231 tests)
+**Tests:** 231 passing
+**Branch:** `claude/hardcore-gagarin-a898c5` — Session F worktree (off `main`)
 
 ---
 
@@ -79,10 +79,10 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **I** — Backtest framework | `991d257` | `src/vibe_trade/backtest/` (data + engine + metrics). `vibe-trade backtest` command. ROADMAP.md added. |
 | (Session I follow-up) | `d610527` | Static `sp100_top.py` (top 100 by mcap, snapshot 2026-05-02) + `vibe-trade refresh-sp100` for quarterly refresh. |
 | (Session I — backtest run) | `dc8dd3a` | First backtest run complete. SPY/QQQ benchmarks + backtrader-style equity curve plot. 212 tests. |
+| **F** — Notifications + logging | `f1eb3b3` | Telegram messages from submit/record/reconcile (with daily summary table); JSON-to-file logs with daily rotation, 7-day retention. Fixed pre-existing `panic` `_get_notifier` and `config-check` strategy bugs. 231 tests. |
 
 ### Not started (per ROADMAP)
 
-- **Session F** — Telegram notifications + structured logging
 - **Session G** — Cron / systemd-timer deployment scaffolding
 - **Session H** — Live paper week (observation, no coding)
 - **Session J** — Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
@@ -237,15 +237,15 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ### Immediate next concrete deliverable
 
-**Session F** — Telegram notifications + structured logging. Per ROADMAP:
+**Session G** — Cron / systemd-timer deployment scaffolding. Per ROADMAP:
 
-- Wire `notify/telegram.py` into submit/record/reconcile jobs
-- Daily summary at 23:35
-- Structured logging + log rotation
+- `deploy/crontab.example` with three cron lines (16:00, 16:25, 23:30 Asia/Jerusalem)
+- `deploy/systemd-timer/` alternative (more robust than cron for retries)
+- Docs: install steps, log locations, missed-run recovery
+- Smoke-test script that runs all three jobs in sequence against paper
 
-### After Session F (per ROADMAP: F → G → H → triage)
+### After Session G (per ROADMAP: G → H → triage)
 
-- **Session G:** `deploy/crontab.example` + `deploy/systemd-timer/`. Smoke-test script.
 - **Session H:** Live paper week — observation only, no coding. Triage findings.
 
 ### Open questions deferred to later sessions
