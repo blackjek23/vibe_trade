@@ -190,6 +190,40 @@ class TradeRepository:
             .all()
         )
 
+    def get_trades_opened_today(self, today: date) -> list[Trade]:
+        """Trades whose BUY filled today (status OPEN or PARTIALLY_FILLED, entry_time on `today`).
+
+        Used by reconcile's Telegram summary. Read-only.
+        """
+        start = datetime.combine(today, datetime.min.time())
+        end = datetime.combine(today, datetime.max.time())
+        return (
+            self.session.query(Trade)
+            .filter(
+                Trade.status.in_(("OPEN", "PARTIALLY_FILLED")),
+                Trade.entry_time >= start,
+                Trade.entry_time <= end,
+            )
+            .all()
+        )
+
+    def get_trades_closed_today(self, today: date) -> list[Trade]:
+        """Trades whose SELL filled today (status CLOSED, exit_time on `today`).
+
+        Used by reconcile's Telegram summary. Read-only.
+        """
+        start = datetime.combine(today, datetime.min.time())
+        end = datetime.combine(today, datetime.max.time())
+        return (
+            self.session.query(Trade)
+            .filter(
+                Trade.status == "CLOSED",
+                Trade.exit_time >= start,
+                Trade.exit_time <= end,
+            )
+            .all()
+        )
+
     def find_by_perm_id(self, perm_id: int) -> Trade | None:
         """Cross-process dedup target: BUY-side IB persistent ID."""
         return (
@@ -277,6 +311,15 @@ class DailyPnLRepository:
         record.open_positions_count = open_positions_count
         self.session.commit()
         return record
+
+    def get_by_date(self, target_date: date) -> DailyPnL | None:
+        """Read-only lookup of the DailyPnL row for `target_date`. Used by reconcile's
+        Telegram summary."""
+        return (
+            self.session.query(DailyPnL)
+            .filter(DailyPnL.date == target_date)
+            .first()
+        )
 
 
 class PortfolioSnapshotRepository:

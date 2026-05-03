@@ -211,3 +211,6 @@ test_backtest_metrics.py,TestBenchmark,test_empty_series_returns_zeros,Empty ser
 test_backtest_plot.py,TestPlot,test_png_created,PNG created with one benchmark overlay
 test_backtest_plot.py,TestPlot,test_png_without_benchmarks,PNG created with no benchmarks
 test_backtest_plot.py,TestPlot,test_png_with_two_benchmarks,PNG created with SPY + QQQ benchmarks
+test_db.py,unit,test_get_trades_opened_today,Filter trades by entry_time on given date and status OPEN/PARTIALLY_FILLED
+test_db.py,unit,test_get_trades_closed_today,Filter trades by exit_time on given date and status CLOSED
+test_db.py,unit,test_dailypnl_get_by_date,Read-only DailyPnL lookup by date returns None if missing

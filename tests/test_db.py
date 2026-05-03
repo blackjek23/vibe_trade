@@ -352,6 +352,116 @@ class TestTradeReads:
 # ---------------------------------------------------------------------------
 
 
+def test_get_trades_opened_today(db_session: Session):
+    from datetime import date, datetime
+    from vibe_trade.db.repository import TradeRepository
+    from vibe_trade.db.models import Trade
+
+    repo = TradeRepository(db_session)
+    today = date(2026, 5, 3)
+
+    # Opened today (entry_time on today, status OPEN)
+    t_open_today = Trade(
+        symbol="AAPL", side="BUY", strategy_name="donchian",
+        requested_quantity=10, filled_quantity=10,
+        entry_price=180.0, entry_time=datetime(2026, 5, 3, 9, 35),
+        status="OPEN",
+    )
+    # Opened yesterday (excluded)
+    t_open_yest = Trade(
+        symbol="MSFT", side="BUY", strategy_name="donchian",
+        requested_quantity=5, filled_quantity=5,
+        entry_price=400.0, entry_time=datetime(2026, 5, 2, 9, 35),
+        status="OPEN",
+    )
+    # Today but still SUBMITTED (excluded — not yet opened)
+    t_submitted_today = Trade(
+        symbol="GOOGL", side="BUY", strategy_name="donchian",
+        requested_quantity=3,
+        submitted_at=datetime(2026, 5, 3, 16, 0),
+        status="SUBMITTED",
+    )
+    # Partially filled today (included)
+    t_partial_today = Trade(
+        symbol="NVDA", side="BUY", strategy_name="donchian",
+        requested_quantity=10, filled_quantity=7,
+        entry_price=900.0, entry_time=datetime(2026, 5, 3, 9, 36),
+        status="PARTIALLY_FILLED",
+    )
+    db_session.add_all([t_open_today, t_open_yest, t_submitted_today, t_partial_today])
+    db_session.commit()
+
+    result = repo.get_trades_opened_today(today)
+    symbols = sorted(t.symbol for t in result)
+    assert symbols == ["AAPL", "NVDA"]
+
+
+def test_get_trades_closed_today(db_session: Session):
+    from datetime import date, datetime
+    from vibe_trade.db.repository import TradeRepository
+    from vibe_trade.db.models import Trade
+
+    repo = TradeRepository(db_session)
+    today = date(2026, 5, 3)
+
+    # Closed today (exit_time on today, status CLOSED)
+    t_closed_today = Trade(
+        symbol="GOOGL", side="BUY", strategy_name="donchian",
+        requested_quantity=3, filled_quantity=3,
+        entry_price=2800.0, entry_time=datetime(2026, 4, 28, 9, 35),
+        exit_price=2850.0, exit_time=datetime(2026, 5, 3, 9, 40),
+        pnl=150.0, pnl_pct=0.0179,
+        status="CLOSED",
+    )
+    # Closed yesterday (excluded)
+    t_closed_yest = Trade(
+        symbol="META", side="BUY", strategy_name="donchian",
+        requested_quantity=4, filled_quantity=4,
+        entry_price=500.0, entry_time=datetime(2026, 4, 25, 9, 35),
+        exit_price=510.0, exit_time=datetime(2026, 5, 2, 9, 40),
+        pnl=40.0, pnl_pct=0.02,
+        status="CLOSED",
+    )
+    # Open with exit_time NULL (excluded)
+    t_open = Trade(
+        symbol="AAPL", side="BUY", strategy_name="donchian",
+        requested_quantity=10, filled_quantity=10,
+        entry_price=180.0, entry_time=datetime(2026, 5, 3, 9, 35),
+        status="OPEN",
+    )
+    db_session.add_all([t_closed_today, t_closed_yest, t_open])
+    db_session.commit()
+
+    result = repo.get_trades_closed_today(today)
+    symbols = [t.symbol for t in result]
+    assert symbols == ["GOOGL"]
+
+
+def test_dailypnl_get_by_date(db_session: Session):
+    from datetime import date
+    from vibe_trade.db.repository import DailyPnLRepository
+
+    repo = DailyPnLRepository(db_session)
+    today = date(2026, 5, 3)
+
+    # No row yet
+    assert repo.get_by_date(today) is None
+
+    # Insert via existing upsert_daily
+    repo.upsert_daily(
+        today=today,
+        realized_pnl=124.30,
+        unrealized_pnl=50.0,
+        trades_opened=2,
+        trades_closed=1,
+        account_value=102_450.0,
+    )
+    record = repo.get_by_date(today)
+    assert record is not None
+    assert record.realized_pnl == 124.30
+    assert record.account_value == 102_450.0
+
+
 class TestPortfolioSnapshotRepository:
     def test_save_and_get(self, db_session: Session):
         repo = PortfolioSnapshotRepository(db_session)
