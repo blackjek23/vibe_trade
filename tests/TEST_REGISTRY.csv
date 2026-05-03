@@ -223,3 +223,5 @@ test_notify_integration.py,unit,test_setup_logging_no_file_when_log_file_none,lo
 test_notify_integration.py,unit,test_format_submit_msg_normal,Submit message renders Exits/Entries counts with date header
 test_notify_integration.py,unit,test_format_submit_msg_with_errors,Submit message lists up to 10 errors when present
 test_notify_integration.py,unit,test_format_submit_msg_entries_skipped,Submit message shows cap_reason when entries phase skipped
+test_notify_integration.py,unit,test_format_record_msg,Record message renders BUY/SELL counts with date header
+test_notify_integration.py,unit,test_format_record_msg_with_errors,Record message lists errors when present

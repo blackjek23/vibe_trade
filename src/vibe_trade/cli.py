@@ -104,6 +104,20 @@ def _format_submit_msg(result, today) -> str:
     return "\n".join(lines)
 
 
+def _format_record_msg(result, today) -> str:
+    """Build the Telegram message for a record run. Pure function."""
+    lines = [
+        f"[RECORD] {today.isoformat()}",
+        f"{result.buys_inserted} BUYs recorded, "
+        f"{result.sells_flipped} SELLs flipped",
+    ]
+    if result.errors:
+        lines.append(f"{len(result.errors)} error(s):")
+        for err in result.errors[:10]:
+            lines.append(f"  - {err}")
+    return "\n".join(lines)
+
+
 @app.command()
 def submit(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
@@ -231,6 +245,8 @@ def record(
 
 
 async def _run_record_cli(config) -> None:
+    from datetime import date as _date
+
     from vibe_trade.broker.ib_broker import IBBroker
     from vibe_trade.db.engine import init_db as _init
     from vibe_trade.db.repository import TradeRepository
@@ -241,6 +257,7 @@ async def _run_record_cli(config) -> None:
     broker_config.client_id = RECORD_CLIENT_ID
     broker = IBBroker(broker_config, mode=config.general.mode)
     session_factory = _init(config.general.db_path)
+    notifier = _get_notifier(config)
 
     console.print(
         f"[bold]Record[/bold] mode={config.general.mode} "
@@ -273,6 +290,12 @@ async def _run_record_cli(config) -> None:
         console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
         for e in result.errors[:10]:
             console.print(f"  - {e}")
+
+    msg = _format_record_msg(result, _date.today())
+    if result.errors:
+        await notifier.notify_error(msg)
+    else:
+        await notifier.notify_summary(msg)
 
 
 @app.command()

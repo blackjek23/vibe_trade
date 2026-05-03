@@ -152,6 +152,26 @@ def test_format_submit_msg_entries_skipped():
     assert "Entries phase skipped: At max positions (50)" in msg
 
 
+def test_format_record_msg():
+    from vibe_trade.cli import _format_record_msg
+    from vibe_trade.jobs.record import RecordResult
+
+    result = RecordResult(buys_inserted=3, sells_flipped=2)
+    msg = _format_record_msg(result, date(2026, 5, 3))
+    assert "[RECORD] 2026-05-03" in msg
+    assert "3 BUYs recorded, 2 SELLs flipped" in msg
+
+
+def test_format_record_msg_with_errors():
+    from vibe_trade.cli import _format_record_msg
+    from vibe_trade.jobs.record import RecordResult
+
+    result = RecordResult(buys_inserted=1, errors=["perm_id=42: ValueError(...)"])
+    msg = _format_record_msg(result, date(2026, 5, 3))
+    assert "1 error(s):" in msg
+    assert "perm_id=42" in msg
+
+
 def test_setup_logging_no_file_when_log_file_none():
     from vibe_trade.cli import _setup_logging
 
