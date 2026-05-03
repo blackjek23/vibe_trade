@@ -19,14 +19,56 @@ app = typer.Typer(name="vibe-trade", help="Vibe Trade -- Stock Trading Bot")
 console = Console()
 
 
+class _JsonFormatter(logging.Formatter):
+    """One JSON object per log record. Used only on the file handler."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+        from datetime import datetime
+
+        payload = {
+            "time": datetime.fromtimestamp(record.created).isoformat(timespec="seconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload)
+
+
 def _setup_logging(level: str, log_file: str | None = None) -> None:
-    fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    """Configure root logger with plain stdout + JSON-rotating file handler.
+
+    File handler rotates at midnight, keeps 7 backups (one week of history).
+    Database is the source of truth for historical analytics; logs are
+    only for short-term operational debugging.
+    """
+    from logging.handlers import TimedRotatingFileHandler
+
+    plain_fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+    root.setLevel(getattr(logging, level, logging.INFO))
+
+    stream = logging.StreamHandler()
+    stream.setFormatter(logging.Formatter(plain_fmt))
+    root.addHandler(stream)
+
     if log_file:
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file))
-    logging.basicConfig(level=getattr(logging, level, logging.INFO), format=fmt, handlers=handlers)
+        file_handler = TimedRotatingFileHandler(
+            log_file,
+            when="midnight",
+            backupCount=7,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(_JsonFormatter())
+        root.addHandler(file_handler)
 
 
 def _get_notifier(config):

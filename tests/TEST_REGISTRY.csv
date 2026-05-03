@@ -216,3 +216,7 @@ test_db.py,unit,test_get_trades_closed_today,Filter trades by exit_time on given
 test_db.py,unit,test_dailypnl_get_by_date,Read-only DailyPnL lookup by date returns None if missing
 test_notify_integration.py,unit,test_get_notifier_returns_console_when_disabled,Telegram off -> ConsoleNotifier returned
 test_notify_integration.py,unit,test_get_notifier_returns_telegram_when_enabled,Telegram on -> TelegramNotifier returned
+test_notify_integration.py,unit,test_setup_logging_stream_handler_is_plain_text,stdout handler uses plain format string (no JSON)
+test_notify_integration.py,unit,test_setup_logging_file_handler_is_rotating,File handler is TimedRotatingFileHandler when=midnight backupCount=7
+test_notify_integration.py,unit,test_setup_logging_file_handler_emits_json,Log records produce parseable JSON lines
+test_notify_integration.py,unit,test_setup_logging_no_file_when_log_file_none,log_file=None means no file handler attached
