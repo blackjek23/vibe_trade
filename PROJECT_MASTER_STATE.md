@@ -4,10 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-03 (end of Session F — Telegram notifications + JSON-rotating logs)
-**HEAD commit:** `f1eb3b3` Fix config-check: remove reference to non-existent strategy field (231 tests)
+**Last updated:** 2026-05-03 (end of Session F — Telegram notifications + JSON-rotating logs, merged to main)
+**HEAD commit:** `a5b5153` Add three notification scratches (live IB paper + test_paper.db) (231 tests)
 **Tests:** 231 passing
-**Branch:** `claude/hardcore-gagarin-a898c5` — Session F worktree (off `main`)
+**Branch:** `main` — synced with `origin/main`. Session F smoke test (live IB paper + Telegram) deferred to a later session.
 
 ---
 
@@ -80,6 +80,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | (Session I follow-up) | `d610527` | Static `sp100_top.py` (top 100 by mcap, snapshot 2026-05-02) + `vibe-trade refresh-sp100` for quarterly refresh. |
 | (Session I — backtest run) | `dc8dd3a` | First backtest run complete. SPY/QQQ benchmarks + backtrader-style equity curve plot. 212 tests. |
 | **F** — Notifications + logging | `f1eb3b3` | Telegram messages from submit/record/reconcile (with daily summary table); JSON-to-file logs with daily rotation, 7-day retention. Fixed pre-existing `panic` `_get_notifier` and `config-check` strategy bugs. 231 tests. |
+| (Session F follow-up) | `a5b5153` | Three notification scratches (`scratch_notify_submit/record/reconcile.py`) using notifier `client_id=8` and `data/test_paper.db`. Smoke test pending. |
 
 ### Not started (per ROADMAP)
 
@@ -237,7 +238,19 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ### Immediate next concrete deliverable
 
-**Session G** — Cron / systemd-timer deployment scaffolding. Per ROADMAP:
+**Session F smoke test** (deferred): run the three notification scratches against IB paper +
+real Telegram bot, in this order:
+
+1. `scratch_place_order.py` (or pre-existing held positions) → seed IB with today's orders
+2. `scratch_notify_submit.py` (client_id=8) → reads IB, sends Submit-style message
+3. `scratch_orders_save.py` → persists fills into `data/test_paper.db`
+4. `scratch_notify_record.py` → reads test DB, sends Record-style message
+5. `scratch_reconcile.py` → finalizes statuses + DailyPnL in test DB
+6. `scratch_notify_reconcile.py` → reads test DB, sends full daily summary table
+
+Confirms Telegram delivery + how the monospace table renders on mobile.
+
+**Session G** — Cron / systemd-timer deployment scaffolding (after smoke test passes). Per ROADMAP:
 
 - `deploy/crontab.example` with three cron lines (16:00, 16:25, 23:30 Asia/Jerusalem)
 - `deploy/systemd-timer/` alternative (more robust than cron for retries)

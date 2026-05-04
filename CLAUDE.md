@@ -33,15 +33,16 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-V2 implementation complete + Session I (backtest framework). 201 tests passing.
+V2 implementation + Session I (backtest run, profitable) + Session F (notifications + JSON-rotating logs). **231 tests passing.** Smoke test for Session F (live IB paper + real Telegram) deferred.
 
 - **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done.
-- **Session I** (backtest framework + ROADMAP + static SP100 top-100 list): done. Framework wired but **the actual backtest run hasn't happened yet** — that's the next concrete step.
+- **Session I** (backtest framework + first run + benchmarks): done. Strategy beats SPY/QQQ on Sharpe (1.14 vs 0.78/0.85) with half the drawdown. Verdict: profitable, proceed forward.
+- **Session F** (notifications + structured logging): done. All three V2 jobs send Telegram via the configured notifier (Console fallback when off). Logs are plain to stdout + JSON to `logs/vibe_trade.log` with daily rotation, 7-day retention. DB is the source of truth for analytics; logs are for short-term ops only.
 - **Strategy:** Donchian channel breakout, N=20, symmetric, excluding the bar being evaluated. Single strategy for first iteration; locked in `src/vibe_trade/strategy/examples/donchian.py`.
 - **Sizing:** 1.8% of net_liquidation per BUY, 50-position cap, floor to whole shares (cents-based arithmetic to defeat float imprecision).
-- **Client IDs:** submit=1, record=2, reconcile=3 (constants in `jobs/submit.py`).
+- **Client IDs:** submit=1, record=2, reconcile=3, notifier=8 (when needed for IB reads). Constants in `jobs/submit.py` and `scratches/scratch_notify_submit.py`.
 - **Cross-process state:** record + reconcile drive from `ib.fills()` (intact across processes), with `permId` as the dedup key (`ib.trades().order` fields reset to 0 on reconnect).
-- **Single source of truth:** `PROJECT_MASTER_STATE.md` at the repo root. Read this first when picking up the project. `docs/ROADMAP.md` covers Sessions F → onward.
+- **Single source of truth:** `PROJECT_MASTER_STATE.md` at the repo root. Read this first when picking up the project. `docs/ROADMAP.md` covers Sessions G → onward.
 
 ## Project layout
 
@@ -53,7 +54,7 @@ src/vibe_trade/
 ├── db/            # SQLAlchemy models, repositories, engine
 ├── jobs/          # V2 jobs: submit.py, record.py, reconcile.py
 ├── backtest/      # data.py, engine.py, metrics.py (Session I)
-├── notify/        # Telegram + console notifiers (currently only used by panic)
+├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic)
 ├── risk/          # manager.py, position_sizer.py, panic.py
 ├── strategy/      # base.py, examples/donchian.py
 └── cli.py         # typer: submit, record, reconcile, backtest, refresh-sp100, status, trades, config-check, panic
@@ -66,8 +67,11 @@ tests/
     test_backtest_data.py, test_backtest_engine.py, test_backtest_metrics.py
 
 docs/
-├── ARCHITECTURE_V2.md   # original V2 plan + post-implementation deltas
-└── ROADMAP.md           # Sessions F → onward
+├── ARCHITECTURE_V2.md         # original V2 plan + post-implementation deltas
+├── ROADMAP.md                 # Sessions G → onward
+└── superpowers/               # per-session design specs + implementation plans
+    ├── specs/
+    └── plans/
 
 scratches/               # live IB-paper shape-discovery + DB-write scripts (not pytest)
 ├── scratch_positions.py       # get_positions + account summary
@@ -76,7 +80,10 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 ├── scratch_orders_save.py     # BUYs → SUBMITTED, SELLs flip OPEN→PENDING_CLOSE (record equivalent)
 ├── scratch_place_order.py     # list of (SIDE, TICKER, QTY) — places BUY/SELL via broker
 ├── scratch_fills_today.py     # ib.fills() raw + grouped by order_id
-└── scratch_reconcile.py       # fills → status transitions + snapshot + daily_pnl (reconcile equivalent)
+├── scratch_reconcile.py       # fills → status transitions + snapshot + daily_pnl (reconcile equivalent)
+├── scratch_notify_submit.py    # IB → Submit-style Telegram message (notifier client_id=8)
+├── scratch_notify_record.py    # test_paper.db → Record-style Telegram message (no IB)
+└── scratch_notify_reconcile.py # test_paper.db → daily summary table (no IB)
 ```
 
 ## Conventions
