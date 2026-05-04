@@ -17,3 +17,8 @@ config/config.toml
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Deploy runtime (not committed)
+deploy/config/
+deploy/logs/
+deploy/.env
