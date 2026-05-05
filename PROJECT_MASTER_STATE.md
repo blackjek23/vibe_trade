@@ -4,10 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-03 (end of Session F — Telegram notifications + JSON-rotating logs, merged to main; Telegram delivery verified)
-**HEAD commit:** `b16f714` Update PROJECT_MASTER_STATE and CLAUDE.md after Session F merge (231 tests)
-**Tests:** 231 passing
-**Branch:** `main` — synced with `origin/main`. Telegram one-off delivery confirmed end-to-end (token + chat_id wired in `config/config.toml`). Full scratch-sequence smoke test still pending.
+**Last updated:** 2026-05-06 (end of Session G — Docker deployment scaffolding, merged to main)
+**HEAD commit:** `8559adc` Merge Session G: Docker deployment scaffolding (231 tests)
+**Tests:** 231 passing (no Python code changes in Session G)
+**Branch:** `main` — synced with `origin/main`.
 
 ---
 
@@ -36,7 +36,7 @@ Cron drives timing. Jobs are short-lived; no long-running process.
 - **Config:** pydantic v2 + pydantic-settings (TOML + env vars + .env)
 - **CLI:** typer + rich
 - **Testing:** pytest + pytest-asyncio (`asyncio_mode = "auto"`)
-- **Deployment target:** Linux server with crontab (prod) / Windows 11 manual (dev)
+- **Deployment:** Docker (single image, three compose services) + host crontab (prod) / Windows 11 manual (dev)
 
 ### Where things live
 
@@ -53,10 +53,11 @@ src/vibe_trade/
 ├── backtest/        data.py, engine.py, metrics.py, plot.py
 └── cli.py           typer commands
 
-tests/               212 tests across all modules + TEST_REGISTRY.csv index
+tests/               231 tests across all modules + TEST_REGISTRY.csv index
 docs/                ARCHITECTURE_V2.md, ROADMAP.md
 scratches/           live IB-paper diagnostics + DB-write scripts (not pytest)
 config/              config.example.toml
+deploy/              Dockerfile, docker-compose.yml, crontab.example, smoke-test.sh, README.md
 ```
 
 ---
@@ -81,10 +82,10 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | (Session I — backtest run) | `dc8dd3a` | First backtest run complete. SPY/QQQ benchmarks + backtrader-style equity curve plot. 212 tests. |
 | **F** — Notifications + logging | `f1eb3b3` | Telegram messages from submit/record/reconcile (with daily summary table); JSON-to-file logs with daily rotation, 7-day retention. Fixed pre-existing `panic` `_get_notifier` and `config-check` strategy bugs. 231 tests. |
 | (Session F follow-up) | `a5b5153` | Three notification scratches (`scratch_notify_submit/record/reconcile.py`) using notifier `client_id=8` and `data/test_paper.db`. Smoke test pending. |
+| **G** — Docker deployment | `8559adc` | Single Docker image + three compose services (submit/record/reconcile). `network_mode: host` for IB Gateway. Host crontab triggers `docker compose run --rm`. Includes Dockerfile (uv), docker-compose.yml, crontab.example, smoke-test.sh, .env.example, deploy/README.md, .dockerignore. No Python code changes. |
 
 ### Not started (per ROADMAP)
 
-- **Session G** — Cron / systemd-timer deployment scaffolding
 - **Session H** — Live paper week (observation, no coding)
 - **Session J** — Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
 - **Session K** — Performance dashboard (`vibe-trade report`)
@@ -172,6 +173,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **DB schema** | `src/vibe_trade/db/models.py` |
 | **Backtest engine** | `src/vibe_trade/backtest/engine.py` (re-uses `donchian.py` + `position_sizer.py`) |
 | **CLI commands** | `src/vibe_trade/cli.py` |
+| **Docker deployment** | `deploy/Dockerfile`, `deploy/docker-compose.yml`, `deploy/smoke-test.sh` |
 
 ---
 
@@ -206,6 +208,11 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 # Live IB-paper diagnostics (requires TWS on 7497, mode=paper)
 .venv/Scripts/python scratches/scratch_positions.py  # data-pull, safe anytime
 .venv/Scripts/python scratches/scratch_reconcile.py  # writes to data/test_paper.db
+
+# Docker deployment (Linux prod — see deploy/README.md)
+cd deploy && docker compose build                    # build image
+cd deploy && docker compose run --rm submit          # run one job
+cd deploy && ./smoke-test.sh                         # run all three sequentially
 ```
 
 ---
@@ -238,30 +245,29 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ### Immediate next concrete deliverable
 
-**Session F smoke test** (deferred): Telegram delivery already confirmed via a one-off
-`notify_summary` test from a Python REPL — message arrived in the configured chat.
-Still pending: run the three notification scratches against IB paper + real trades to
-verify the formatted message **content** with real data, in this order:
+**Session H — Live paper week.** The bot is ready for its first live run. No coding — just observation and triage.
 
-1. `scratch_place_order.py` (or pre-existing held positions) → seed IB with today's orders
-2. `scratch_notify_submit.py` (client_id=8) → reads IB, sends Submit-style message
-3. `scratch_orders_save.py` → persists fills into `data/test_paper.db`
-4. `scratch_notify_record.py` → reads test DB, sends Record-style message
-5. `scratch_reconcile.py` → finalizes statuses + DailyPnL in test DB
-6. `scratch_notify_reconcile.py` → reads test DB, sends full daily summary table
+**Pre-flight (on Linux host):**
+1. Ensure IB Gateway is running on `localhost:7497`, logged in to paper account
+2. Install the bot: `git clone <repo> /opt/vibe-trade && cd /opt/vibe-trade && pip install .` (or use Docker: `cd deploy && docker compose build`)
+3. Create `config/config.toml` from `config/config.example.toml` — set `mode = "paper"`, fill in Telegram creds
+4. Manual bare-metal run first day: `python -m vibe_trade submit` at 16:00, `record` at 16:25, `reconcile` at 23:30
+5. Once validated, switch to Docker + cron: `cd deploy && crontab crontab.example`
 
-Confirms Telegram delivery + how the monospace table renders on mobile.
+**What to observe over 5–10 trading days:**
+- Orders placed vs strategy signals (any mismatches?)
+- Partial fills (any on liquid SP500 names?)
+- Reconcile drift (DB vs IB positions after reconcile)
+- Telegram message formatting on mobile
+- Log noise level
+- IB Gateway login stability (does it drop overnight?)
 
-**Session G** — Cron / systemd-timer deployment scaffolding (after smoke test passes). Per ROADMAP:
+**After the week:** triage findings into later sessions as needed.
 
-- `deploy/crontab.example` with three cron lines (16:00, 16:25, 23:30 Asia/Jerusalem)
-- `deploy/systemd-timer/` alternative (more robust than cron for retries)
-- Docs: install steps, log locations, missed-run recovery
-- Smoke-test script that runs all three jobs in sequence against paper
+### After Session H (per ROADMAP)
 
-### After Session G (per ROADMAP: G → H → triage)
-
-- **Session H:** Live paper week — observation only, no coding. Triage findings.
+- **Session J:** Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
+- **Session K:** Performance dashboard (`vibe-trade report`)
 
 ### Open questions deferred to later sessions
 

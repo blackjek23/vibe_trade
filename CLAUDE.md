@@ -23,7 +23,7 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 | 16:25                 | `vibe-trade record`       | Save today's submissions to DB as SUBMITTED.                            |
 | 23:30                 | `vibe-trade reconcile`    | Update statuses (FILLED/CANCELLED/PARTIALLY_FILLED) + portfolio snapshot. |
 
-**Deployment:** Linux headless server with crontab (prod) / Windows 11 manual CLI (dev). Timezone = `Asia/Jerusalem`.
+**Deployment:** Docker containers via `docker compose run` + host crontab (prod) / Windows 11 manual CLI (dev). Timezone = `Asia/Jerusalem`. See `deploy/README.md` for setup.
 
 **Key invariants:**
 - Strategies evaluate yesterday's closed daily bar (`df.iloc[-1]`). No intraday, no lookahead.
@@ -33,16 +33,17 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-V2 implementation + Session I (backtest run, profitable) + Session F (notifications + JSON-rotating logs). **231 tests passing.** Smoke test for Session F (live IB paper + real Telegram) deferred.
+V2 implementation + Session I (backtest run, profitable) + Session F (notifications + JSON-rotating logs) + Session G (Docker deployment). **231 tests passing.** Ready for Session H (live paper week).
 
 - **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done.
 - **Session I** (backtest framework + first run + benchmarks): done. Strategy beats SPY/QQQ on Sharpe (1.14 vs 0.78/0.85) with half the drawdown. Verdict: profitable, proceed forward.
 - **Session F** (notifications + structured logging): done. All three V2 jobs send Telegram via the configured notifier (Console fallback when off). Logs are plain to stdout + JSON to `logs/vibe_trade.log` with daily rotation, 7-day retention. DB is the source of truth for analytics; logs are for short-term ops only.
+- **Session G** (Docker deployment): done. Single image (python:3.11-slim + uv), three compose services, `network_mode: host` for IB Gateway. Host crontab triggers jobs Mon–Fri. Includes smoke-test script and full deploy README.
 - **Strategy:** Donchian channel breakout, N=20, symmetric, excluding the bar being evaluated. Single strategy for first iteration; locked in `src/vibe_trade/strategy/examples/donchian.py`.
 - **Sizing:** 1.8% of net_liquidation per BUY, 50-position cap, floor to whole shares (cents-based arithmetic to defeat float imprecision).
 - **Client IDs:** submit=1, record=2, reconcile=3, notifier=8 (when needed for IB reads). Constants in `jobs/submit.py` and `scratches/scratch_notify_submit.py`.
 - **Cross-process state:** record + reconcile drive from `ib.fills()` (intact across processes), with `permId` as the dedup key (`ib.trades().order` fields reset to 0 on reconnect).
-- **Single source of truth:** `PROJECT_MASTER_STATE.md` at the repo root. Read this first when picking up the project. `docs/ROADMAP.md` covers Sessions G → onward.
+- **Single source of truth:** `PROJECT_MASTER_STATE.md` at the repo root. Read this first when picking up the project. `docs/ROADMAP.md` covers Sessions H → onward.
 
 ## Project layout
 
@@ -66,9 +67,17 @@ tests/
     test_reconcile.py, test_record.py, test_risk_manager.py, test_submit.py, test_universe.py,
     test_backtest_data.py, test_backtest_engine.py, test_backtest_metrics.py
 
+deploy/
+├── Dockerfile                 # python:3.11-slim + uv, single image for all jobs
+├── docker-compose.yml         # submit, record, reconcile services (network_mode: host)
+├── .env.example               # Telegram secrets template
+├── crontab.example            # Mon-Fri 16:00/16:25/23:30 Asia/Jerusalem
+├── smoke-test.sh              # sequential run of all three jobs
+└── README.md                  # full setup, scheduling, troubleshooting guide
+
 docs/
 ├── ARCHITECTURE_V2.md         # original V2 plan + post-implementation deltas
-├── ROADMAP.md                 # Sessions G → onward
+├── ROADMAP.md                 # Sessions H → onward
 └── superpowers/               # per-session design specs + implementation plans
     ├── specs/
     └── plans/
@@ -118,6 +127,11 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 
 # Maintenance
 .venv/Scripts/python -m vibe_trade refresh-sp100   # quarterly: refresh top-100 list
+
+# Docker deployment (Linux prod — see deploy/README.md)
+cd deploy && docker compose build                  # build image
+cd deploy && docker compose run --rm submit        # run one job
+cd deploy && ./smoke-test.sh                       # run all three sequentially
 ```
 
 ## Communication style
