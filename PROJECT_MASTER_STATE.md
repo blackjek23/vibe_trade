@@ -4,10 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-03 (end of Session F — Telegram notifications + JSON-rotating logs, merged to main)
-**HEAD commit:** `a5b5153` Add three notification scratches (live IB paper + test_paper.db) (231 tests)
+**Last updated:** 2026-05-03 (end of Session F — Telegram notifications + JSON-rotating logs, merged to main; Telegram delivery verified)
+**HEAD commit:** `b16f714` Update PROJECT_MASTER_STATE and CLAUDE.md after Session F merge (231 tests)
 **Tests:** 231 passing
-**Branch:** `main` — synced with `origin/main`. Session F smoke test (live IB paper + Telegram) deferred to a later session.
+**Branch:** `main` — synced with `origin/main`. Telegram one-off delivery confirmed end-to-end (token + chat_id wired in `config/config.toml`). Full scratch-sequence smoke test still pending.
 
 ---
 
@@ -238,8 +238,10 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ### Immediate next concrete deliverable
 
-**Session F smoke test** (deferred): run the three notification scratches against IB paper +
-real Telegram bot, in this order:
+**Session F smoke test** (deferred): Telegram delivery already confirmed via a one-off
+`notify_summary` test from a Python REPL — message arrived in the configured chat.
+Still pending: run the three notification scratches against IB paper + real trades to
+verify the formatted message **content** with real data, in this order:
 
 1. `scratch_place_order.py` (or pre-existing held positions) → seed IB with today's orders
 2. `scratch_notify_submit.py` (client_id=8) → reads IB, sends Submit-style message
