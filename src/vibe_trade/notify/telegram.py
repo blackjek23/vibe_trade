@@ -36,7 +36,7 @@ class TelegramNotifier(BaseNotifier):
 
     async def notify_summary(self, message: str) -> None:
         if self.config.daily_summary:
-            await self._send(f"[SUMMARY] {message}")
+            await self._send(message)
 
     async def notify_error(self, message: str) -> None:
         if self.config.notify_on_error:
