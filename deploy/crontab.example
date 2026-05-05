@@ -1,0 +1,10 @@
+# vibe-trade V2 — three daily jobs
+# Timezone: Asia/Jerusalem (set host TZ or use timedatectl)
+# Prereq: IB Gateway running on localhost:7497
+#
+# Install: crontab deploy/crontab.example
+# Verify:  crontab -l
+
+00 16 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm submit   >> ./logs/cron.log 2>&1
+25 16 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm record   >> ./logs/cron.log 2>&1
+30 23 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm reconcile >> ./logs/cron.log 2>&1
