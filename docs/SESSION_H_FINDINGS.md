@@ -127,15 +127,64 @@ docker compose run --rm submit config-check --config /config/config.toml
 
 ---
 
+## 🟢 Enhancement #1 — Force-trim positions when over `max_open_positions`
+
+**Requested:** 2026-05-11 by user
+**Current behavior:** `risk/manager.py:can_open_new_position` — if `held >= max_open_positions`, the entries phase is skipped entirely. Existing surplus positions are left untouched until they hit a normal Donchian exit signal.
+
+**Requested behavior:** in `submit`, after the regular Donchian exits but before entries, if `held > max_open_positions`, force-sell the **N lowest-performing positions** until `held == max_open_positions`.
+
+Example: held = 60, max = 50 → force-sell the 10 worst performers.
+
+**Why this matters:** without it, if the user lowers the cap mid-cycle, or adds positions manually, or after a config change, the bot can sit above the cap indefinitely. This makes the cap an *active rebalance target* instead of a *passive gate*.
+
+**Open design questions (decide at Saturday triage):**
+
+1. **What is "lowest-performing"?**
+   - Option A: largest **unrealized $ loss** (most negative `unrealizedPNL`)
+   - Option B: lowest **unrealized return %** (`unrealizedPNL / (avgCost × position)`)
+   - Option C: longest-held positions that are flat/down (time-weighted)
+   - **Recommendation:** **Option B** — % return is fairest across position sizes (1 share of $1000 stock vs 100 shares of $10 stock).
+
+2. **Where does this slot in the submit flow?**
+   - Current: Exits (Donchian signals) → Entries
+   - Proposed: Exits (Donchian signals) → **Force-trim if over cap** → Entries
+   - Trim sales count toward `record`/`reconcile` lifecycle like normal SELLs.
+
+3. **Tag the trim sells differently?**
+   - Suggest setting `Order.orderRef = "trim"` (vs strategy ref) so we can later distinguish "exited because Donchian said so" vs "exited because over cap" in analytics.
+
+4. **Edge cases:**
+   - If Donchian already exited some positions this run, recheck count before deciding how many to trim.
+   - If after Donchian exits we're already at or below cap, skip force-trim entirely.
+   - If `held > max_open_positions × 1.5` (severely over) — alert via Telegram with a `[WARNING]` prefix; this state shouldn't normally arise.
+
+5. **Telegram messaging:**
+   - Submit summary should distinguish "Donchian exits" from "force-trim exits" in the count breakdown.
+
+6. **Backtest implications:**
+   - Need to add the same logic to `backtest/engine.py` to keep production and backtest semantics aligned. Otherwise backtest results stop being a faithful preview.
+
+7. **Test plan:**
+   - Unit test: held=60, max=50 → 10 trim signals on the 10 lowest %-return positions.
+   - Unit test: held=50, max=50 → 0 trim signals.
+   - Unit test: held=55, max=50, Donchian already signalled 5 exits → 0 trim signals (Donchian covered it).
+   - Integration test with mocked IB returning a 60-position account.
+
+**Status:** Open. Design decisions needed at Saturday triage before implementation.
+
+---
+
 ## 📋 Saturday triage checklist
 
 When we fix Saturday, do them in this order to minimize re-test churn:
 
 1. **Bug #1** (`PreSubmitted` as success) — biggest functional impact, needs a unit test
-2. **Hygiene #2** (commit `TZ` to compose + Dockerfile) — re-deploy fixes config drift between repo and prod
-3. **Hygiene #1** (universe refresh + dot-to-dash + yfinance retry) — quality of life
-4. **Hygiene #3** (config-check default path) — UX polish, low priority
-5. Bump tests in `tests/TEST_REGISTRY.csv`, update `PROJECT_MASTER_STATE.md` test count
+2. **Enhancement #1** (force-trim over-cap positions) — answer the 7 open design questions, then implement in `submit` + `backtest/engine` together
+3. **Hygiene #2** (commit `TZ` to compose + Dockerfile) — re-deploy fixes config drift between repo and prod
+4. **Hygiene #1** (universe refresh + dot-to-dash + yfinance retry) — quality of life
+5. **Hygiene #3** (config-check default path) — UX polish, low priority
+6. Bump tests in `tests/TEST_REGISTRY.csv`, update `PROJECT_MASTER_STATE.md` test count
 
 Re-deploy on Linux box: `git pull && cd deploy && docker compose build`.
 
