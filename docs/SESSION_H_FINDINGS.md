@@ -138,40 +138,32 @@ Example: held = 60, max = 50 → force-sell the 10 worst performers.
 
 **Why this matters:** without it, if the user lowers the cap mid-cycle, or adds positions manually, or after a config change, the bot can sit above the cap indefinitely. This makes the cap an *active rebalance target* instead of a *passive gate*.
 
-**Open design questions (decide at Saturday triage):**
+**Design decisions (locked 2026-05-11 by user):**
 
-1. **What is "lowest-performing"?**
-   - Option A: largest **unrealized $ loss** (most negative `unrealizedPNL`)
-   - Option B: lowest **unrealized return %** (`unrealizedPNL / (avgCost × position)`)
-   - Option C: longest-held positions that are flat/down (time-weighted)
-   - **Recommendation:** **Option B** — % return is fairest across position sizes (1 share of $1000 stock vs 100 shares of $10 stock).
+1. **"Lowest-performing" = lowest unrealized P&L in dollars.** Most negative `unrealizedPNL` from `ib.portfolio()` goes first. Not return %, not time-weighted. Simple, direct.
 
-2. **Where does this slot in the submit flow?**
-   - Current: Exits (Donchian signals) → Entries
-   - Proposed: Exits (Donchian signals) → **Force-trim if over cap** → Entries
-   - Trim sales count toward `record`/`reconcile` lifecycle like normal SELLs.
+2. **Flow:** Donchian exits → **force-trim if over cap** → entries.
+   - User note: when force-trim runs, the entries phase will see `held == max` and the existing `can_open_new_position` check skips entries naturally. So in practice, an over-cap day = no new entries. That's the intended outcome; no special handling needed.
 
-3. **Tag the trim sells differently?**
-   - Suggest setting `Order.orderRef = "trim"` (vs strategy ref) so we can later distinguish "exited because Donchian said so" vs "exited because over cap" in analytics.
+3. **Tag trim sells with `Order.orderRef = "trim"`.** Distinguishes them from Donchian exits in record/analytics later.
 
-4. **Edge cases:**
-   - If Donchian already exited some positions this run, recheck count before deciding how many to trim.
-   - If after Donchian exits we're already at or below cap, skip force-trim entirely.
-   - If `held > max_open_positions × 1.5` (severely over) — alert via Telegram with a `[WARNING]` prefix; this state shouldn't normally arise.
+4. **Edge cases — keep simple, no warnings/alerts:**
+   - If after Donchian exits we're already at/below cap, skip force-trim.
+   - No Telegram `[WARNING]` for severe over-cap. Just trim to `max` and move on.
 
-5. **Telegram messaging:**
-   - Submit summary should distinguish "Donchian exits" from "force-trim exits" in the count breakdown.
+5. **Telegram messaging:** keep simple for now. Submit summary may report the trim count combined with Donchian exits; refine later if it becomes confusing.
 
-6. **Backtest implications:**
-   - Need to add the same logic to `backtest/engine.py` to keep production and backtest semantics aligned. Otherwise backtest results stop being a faithful preview.
+6. **Backtest parity:** apply same logic to `backtest/engine.py` so backtest stays a faithful preview of production.
 
-7. **Test plan:**
-   - Unit test: held=60, max=50 → 10 trim signals on the 10 lowest %-return positions.
-   - Unit test: held=50, max=50 → 0 trim signals.
-   - Unit test: held=55, max=50, Donchian already signalled 5 exits → 0 trim signals (Donchian covered it).
-   - Integration test with mocked IB returning a 60-position account.
+7. **Tests to add Saturday:**
+   - `tests/test_submit.py::test_force_trim_lowest_dollar_pnl` — held=60 positions with varied unrealized $ P&L, max=50 → exactly 10 trim sells, on the 10 with most-negative `unrealizedPNL`.
+   - `tests/test_submit.py::test_force_trim_at_cap_no_op` — held=50, max=50 → 0 trim signals.
+   - `tests/test_submit.py::test_force_trim_after_donchian_exits_brings_under_cap` — held=55, max=50, Donchian signals 5 exits → 0 additional trim signals.
+   - `tests/test_submit.py::test_force_trim_tags_orderref` — verify the SELL orders carry `orderRef="trim"`.
+   - `tests/test_backtest_engine.py::test_force_trim_matches_production` — same scenario in backtest, same result.
+   - One mocked-IB integration in `tests/test_submit.py` with a 60-position portfolio.
 
-**Status:** Open. Design decisions needed at Saturday triage before implementation.
+**Status:** Locked. Implement Saturday.
 
 ---
 
