@@ -322,6 +322,117 @@ class TestDailyPnL:
         assert row.open_positions_count == 1
 
 
+class TestOrphanFills:
+    """Bug #5 — late-fill recovery. Fills present in ib.fills() with no matching
+    DB row get back-filled directly to OPEN (no intermediate SUBMITTED step).
+    Happens when a market order placed at 16:00 fills after the 16:25 record run.
+    """
+
+    async def test_orphan_buy_back_filled_to_open(self, db_session: Session):
+        """Single orphan BUY fill, no DB pending rows -> new OPEN row inserted."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        # No pending row in DB; reconcile must back-fill.
+        broker = MockBroker(
+            trades=[_ib_trade(perm_id=777, symbol="LATE", action="BUY", status="Filled")],
+            fills=[_fill(perm_id=777, order_id=99, symbol="LATE", side="BOT",
+                         shares=15, price=42.50)],
+        )
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.orphan_fills_inserted == 1
+        assert result.opened == 0  # nothing in pending; orphans are tracked separately
+
+        row = trade_repo.find_by_perm_id(777)
+        assert row is not None
+        assert row.symbol == "LATE"
+        assert row.side == "BUY"
+        assert row.status == "OPEN"
+        assert row.filled_quantity == 15
+        assert row.requested_quantity == 15  # we never saw the original ask
+        assert row.entry_price == pytest.approx(42.50)
+        assert row.entry_time is not None
+        assert row.entry_time.tzinfo is None  # naive after _strip_tz
+
+    async def test_orphan_fills_idempotent_on_rerun(self, db_session: Session):
+        """Re-running reconcile must not duplicate orphan rows."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        broker = MockBroker(
+            trades=[_ib_trade(perm_id=888, symbol="DUP", action="BUY", status="Filled")],
+            fills=[_fill(perm_id=888, order_id=1, symbol="DUP", side="BOT",
+                         shares=10, price=50.0)],
+        )
+        # First run inserts.
+        result1 = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result1.orphan_fills_inserted == 1
+        # Second run sees the existing row and skips.
+        result2 = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result2.orphan_fills_inserted == 0
+        assert db_session.query(Trade).filter(Trade.perm_id == 888).count() == 1
+
+    async def test_orphan_mixed_with_pending_dont_double_handle(self, db_session: Session):
+        """Pending SUBMITTED row + orphan fill in the same run: pending processed
+        via the normal path; orphan inserted as new OPEN. Same permId is never
+        seen by both paths.
+        """
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        # 1 pending SUBMITTED (perm 111) + 1 orphan (perm 222), both BUYs.
+        submitted = _make_submitted_buy(trade_repo, symbol="PEND", perm_id=111, qty=10)
+        broker = MockBroker(
+            trades=[
+                _ib_trade(perm_id=111, symbol="PEND", action="BUY", status="Filled"),
+                _ib_trade(perm_id=222, symbol="ORPH", action="BUY", status="Filled"),
+            ],
+            fills=[
+                _fill(perm_id=111, order_id=1, symbol="PEND", side="BOT",
+                      shares=10, price=20.0),
+                _fill(perm_id=222, order_id=2, symbol="ORPH", side="BOT",
+                      shares=7, price=33.0),
+            ],
+        )
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.opened == 1                  # PEND went SUBMITTED -> OPEN
+        assert result.orphan_fills_inserted == 1   # ORPH inserted fresh
+
+        pend_row = db_session.get(Trade, submitted.id)
+        assert pend_row.status == "OPEN"
+        assert pend_row.entry_price == pytest.approx(20.0)
+
+        orph_row = trade_repo.find_by_perm_id(222)
+        assert orph_row is not None
+        assert orph_row.status == "OPEN"
+        assert orph_row.symbol == "ORPH"
+        assert orph_row.filled_quantity == 7
+
+    async def test_orphan_sell_warns_but_doesnt_insert(self, db_session: Session):
+        """SELL fill with no matching OPEN trade in DB -- count as unmatched,
+        do NOT insert (we'd need a buy row to attach P&L to)."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        broker = MockBroker(
+            trades=[_ib_trade(perm_id=555, symbol="GHOST", action="SELL", status="Filled")],
+            fills=[_fill(perm_id=555, order_id=1, symbol="GHOST", side="SLD",
+                         shares=5, price=10.0)],
+        )
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.orphan_sells_unmatched == 1
+        assert result.orphan_fills_inserted == 0
+        assert trade_repo.find_by_perm_id(555) is None  # nothing inserted
+        assert trade_repo.find_by_exit_perm_id(555) is None
+
+
 class TestRobustness:
     async def test_per_trade_exception_doesnt_abort(self, db_session: Session):
         trade_repo, snap_repo, daily_repo = _setup_repos(db_session)

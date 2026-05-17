@@ -4,10 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-06 (end of Session G — Docker deployment scaffolding, merged to main)
-**HEAD commit:** `8559adc` Merge Session G: Docker deployment scaffolding (231 tests)
-**Tests:** 231 passing (no Python code changes in Session G)
-**Branch:** `main` — synced with `origin/main`.
+**Last updated:** 2026-05-16 (Saturday triage — Tier 1 blockers + Tier 2 force-trim landed)
+**HEAD commit:** (to be filled at commit time)
+**Tests:** ~253 expected (231 + 22 new this session — Bug #5: 4, Bug #6: 5, Bug #1: 3, Enhancement #1: 10)
+**Branch:** `main` — Saturday triage merged. Local pytest run was skipped (env constraint); validation runs Mon 2026-05-18 + Tue 2026-05-19.
 
 ---
 
@@ -83,10 +83,14 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **F** — Notifications + logging | `f1eb3b3` | Telegram messages from submit/record/reconcile (with daily summary table); JSON-to-file logs with daily rotation, 7-day retention. Fixed pre-existing `panic` `_get_notifier` and `config-check` strategy bugs. 231 tests. |
 | (Session F follow-up) | `a5b5153` | Three notification scratches (`scratch_notify_submit/record/reconcile.py`) using notifier `client_id=8` and `data/test_paper.db`. Smoke test pending. |
 | **G** — Docker deployment | `8559adc` | Single Docker image + three compose services (submit/record/reconcile). `network_mode: host` for IB Gateway. Host crontab triggers `docker compose run --rm`. Includes Dockerfile (uv), docker-compose.yml, crontab.example, smoke-test.sh, .env.example, deploy/README.md, .dockerignore. No Python code changes. |
+| **H (partial)** — Live paper week + Tier-1 fixes + Enhancement #1 | (Saturday 2026-05-16) | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. Findings + decisions in `docs/SESSION_H_FINDINGS.md`. 22 new tests. Pending: two validation paper days (Mon 2026-05-18, Tue 2026-05-19), then hygiene items (parallel yfinance, universe refresh, TZ env, config-check default) before Session H closes formally. |
+
+### In progress
+
+- **Session H (validation)** — two paper days Mon 2026-05-18 + Tue 2026-05-19 with the Saturday fixes deployed, then close formally.
 
 ### Not started (per ROADMAP)
 
-- **Session H** — Live paper week (observation, no coding)
 - **Session J** — Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
 - **Session K** — Performance dashboard (`vibe-trade report`)
 - **Session L** — Multi-strategy (Donchian + RSI + MA crossover via `Order.orderRef`)
@@ -245,35 +249,33 @@ cd deploy && ./smoke-test.sh                         # run all three sequentiall
 
 ### Immediate next concrete deliverable
 
-**Session H — Live paper week.** The bot is ready for its first live run. No coding — just observation and triage.
+**Session H validation week (Mon 2026-05-18 + Tue 2026-05-19).** Tier-1 fixes (Bug #1, #5, #6) and Tier-2 force-trim landed Saturday. Now we run two more paper days with the fixes in place and confirm:
 
-**Pre-flight (on Linux host):**
-1. Ensure IB Gateway is running on `localhost:7497`, logged in to paper account
-2. Install the bot: `git clone <repo> /opt/vibe-trade && cd /opt/vibe-trade && pip install .` (or use Docker: `cd deploy && docker compose build`)
-3. Create `config/config.toml` from `config/config.example.toml` — set `mode = "paper"`, fill in Telegram creds
-4. Manual bare-metal run first day: `python -m vibe_trade submit` at 16:00, `record` at 16:25, `reconcile` at 23:30
-5. Once validated, switch to Docker + cron: `cd deploy && crontab crontab.example`
+- Submit Telegram says `Placed=N, Failed=0` even pre-RTH (Bug #1 verified live)
+- Reconcile `opened` count matches submit's `Placed` count (Bug #5 verified — no orphan drift; if any orphans appear they're back-filled)
+- If we run anywhere over 50 positions at the start of a day, force-trim engages with `orderRef="trim"`
+- No `[CRITICAL]` Telegram alerts (Bug #6 verified by absence)
 
-**What to observe over 5–10 trading days:**
-- Orders placed vs strategy signals (any mismatches?)
-- Partial fills (any on liquid SP500 names?)
-- Reconcile drift (DB vs IB positions after reconcile)
-- Telegram message formatting on mobile
-- Log noise level
-- IB Gateway login stability (does it drop overnight?)
+**Deploy on Linux host:**
+```bash
+cd /opt/vibe-trade && git pull
+cd deploy && docker compose build
+docker compose run --rm reconcile --config /config/config.toml   # one-shot to absorb any pre-existing orphans
+```
 
-**After the week:** triage findings into later sessions as needed.
+If the two days pass clean → Session H closes. Tier-3 hygiene (parallel yfinance fetches, SP500 universe refresh, TZ env in compose, config-check default path) is the next session.
 
 ### After Session H (per ROADMAP)
 
+- **Session H-hygiene** (small): Tier-3 items from findings doc — parallel yfinance, universe refresh, TZ env in compose, config-check default
 - **Session J:** Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
 - **Session K:** Performance dashboard (`vibe-trade report`)
 
 ### Open questions deferred to later sessions
 
-- **Late-fill edge case** (Phase 4): a market order placed at 16:00 that fills *after* 16:25 — record misses it. Reconcile should auto-create the SUBMITTED row. Not yet implemented.
-- **Multi-strategy attribution** (Session L): when a second strategy lands, use `Order.orderRef = strategy_id` so record can read `fill.execution.orderRef`.
+- **Multi-strategy attribution** (Session L): when a second strategy lands, use `Order.orderRef = strategy_id` so record can read `fill.execution.orderRef`. (Note: `orderRef` plumbing already added Saturday for the force-trim tag — same channel.)
 - **Survivorship bias** (Phase 4): point-in-time SP500 membership instead of today's snapshot.
+- **Reconnect logic** during a job: current crash-alert wrapper notifies and exits; no in-process recovery from mid-run disconnect.
 
 ---
 

@@ -51,6 +51,14 @@ RECONCILE_CLIENT_ID: int = 3
 # ~42 trading days, comfortable margin over the 21 we need.
 DEFAULT_LOOKBACK_DAYS: int = 60
 
+# IB order statuses that count as a successful placement. ``PreSubmitted`` is
+# the normal status for a market order placed before US RTH (16:00 IDT cron
+# fires 30 min before open) -- the order *is* at IB and will fill at the open.
+# Treating it as failure was Bug #1 (see docs/SESSION_H_FINDINGS.md).
+PLACEMENT_SUCCESS_STATUSES: frozenset[str] = frozenset(
+    {"FILLED", "Filled", "SUBMITTED", "Submitted", "PreSubmitted", "PartiallyFilled"}
+)
+
 
 @dataclass
 class SubmitResult:
@@ -62,6 +70,11 @@ class SubmitResult:
     exits_signaled: int = 0    # SELL signals returned
     exits_placed: int = 0      # SELL orders accepted by IB
     exits_failed: int = 0      # exceptions during exit handling
+
+    # Force-trim (over-cap relief, Enhancement #1)
+    trim_signaled: int = 0     # candidates returned by RiskManager.select_force_trim_candidates
+    trim_placed: int = 0       # SELL orders accepted by IB (orderRef="trim")
+    trim_failed: int = 0       # exceptions during trim placement
 
     # Entries (universe tickers we evaluated)
     entries_evaluated: int = 0       # universe tickers we ran the strategy on
@@ -110,6 +123,7 @@ async def run_submit(
     )
 
     # ----------------------------------------------------------------- exits
+    donchian_exit_symbols: set[str] = set()
     for pos in longs:
         result.exits_evaluated += 1
         try:
@@ -131,10 +145,14 @@ async def run_submit(
             logger.info("SELL signal: %s (qty=%d)", pos.symbol, pos.quantity)
 
             order_result = await broker.place_market_order(
-                OrderRequest(symbol=pos.symbol, side="SELL", quantity=pos.quantity)
+                OrderRequest(
+                    symbol=pos.symbol, side="SELL", quantity=pos.quantity,
+                    order_ref=strategy.name,
+                )
             )
-            if order_result.status in ("FILLED", "SUBMITTED"):
+            if order_result.status in PLACEMENT_SUCCESS_STATUSES:
                 result.exits_placed += 1
+                donchian_exit_symbols.add(pos.symbol)
             else:
                 result.exits_failed += 1
                 result.errors.append(
@@ -146,6 +164,46 @@ async def run_submit(
             err = f"exit {pos.symbol}: {exc!r}"
             logger.exception(err)
             result.errors.append(err)
+
+    # ------------------------------------------------------------ force-trim
+    # Enhancement #1: if we still hold more than `max_positions` after Donchian
+    # exits, sell the worst-performing (lowest unrealized $ P&L) until we're
+    # back at the cap. Trim orders are tagged orderRef="trim" so record /
+    # analytics can tell them apart from strategy exits.
+    trim_symbols = risk_manager.select_force_trim_candidates(
+        longs, max_positions, already_exiting=donchian_exit_symbols,
+    )
+    result.trim_signaled = len(trim_symbols)
+    if trim_symbols:
+        logger.info(
+            "FORCE TRIM: held=%d max=%d -> trimming %d position(s): %s",
+            len(longs) - len(donchian_exit_symbols), max_positions,
+            len(trim_symbols), trim_symbols,
+        )
+        # Map symbol -> Position so we know the quantity to sell.
+        by_symbol = {p.symbol: p for p in longs}
+        for sym in trim_symbols:
+            try:
+                pos = by_symbol[sym]
+                order_result = await broker.place_market_order(
+                    OrderRequest(
+                        symbol=sym, side="SELL", quantity=pos.quantity,
+                        order_ref="trim",
+                    )
+                )
+                if order_result.status in PLACEMENT_SUCCESS_STATUSES:
+                    result.trim_placed += 1
+                else:
+                    result.trim_failed += 1
+                    result.errors.append(
+                        f"trim {sym}: order status={order_result.status} "
+                        f"err={order_result.error_message}"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                result.trim_failed += 1
+                err = f"trim {sym}: {exc!r}"
+                logger.exception(err)
+                result.errors.append(err)
 
     # --------------------------------------------------------------- entries
     cap_check = risk_manager.can_open_new_position(positions)
@@ -198,7 +256,7 @@ async def run_submit(
             order_result = await broker.place_market_order(
                 OrderRequest(symbol=symbol, side="BUY", quantity=shares)
             )
-            if order_result.status in ("FILLED", "SUBMITTED"):
+            if order_result.status in PLACEMENT_SUCCESS_STATUSES:
                 result.entries_placed += 1
                 placed_this_run += 1
                 held_symbols.add(symbol)

@@ -62,3 +62,34 @@ class RiskManager:
                     reason=f"Already holding position in {signal.symbol}",
                 )
         return RiskDecision(approved=True)
+
+    @staticmethod
+    def select_force_trim_candidates(
+        positions: list[Position],
+        max_positions: int,
+        already_exiting: set[str] | None = None,
+    ) -> list[str]:
+        """Return symbols to force-sell to bring the long-position count down to
+        ``max_positions``. Ranked by **lowest unrealized $ P&L** -- the most-
+        negative ``unrealized_pnl`` goes first.
+
+        ``already_exiting`` is the set of symbols Donchian already decided to
+        exit in this same submit run; they're still in ``positions`` (the SELL
+        hasn't filled yet) but must not be double-counted toward over-cap math
+        and must never appear in the returned trim list.
+
+        Returns ``[]`` if (long_positions - already_exiting) <= max_positions.
+
+        Pure function -- no broker, no IB calls. Easy to unit-test.
+        """
+        already_exiting = already_exiting or set()
+        eligible = [
+            p for p in positions
+            if p.quantity > 0 and p.symbol not in already_exiting
+        ]
+        over = len(eligible) - max_positions
+        if over <= 0:
+            return []
+        # Ascending unrealized_pnl -> most-negative first.
+        eligible.sort(key=lambda p: p.unrealized_pnl)
+        return [p.symbol for p in eligible[:over]]

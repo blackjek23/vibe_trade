@@ -50,6 +50,8 @@ class ReconcileResult:
     closed: int = 0                # PENDING_CLOSE -> CLOSED or PARTIALLY_FILLED
     cancelled: int = 0             # buy never filled, or sell cancelled (reverted to OPEN)
     skipped_still_working: int = 0 # no fills yet, status still working
+    orphan_fills_inserted: int = 0 # fills with no DB row -- back-filled straight to OPEN (Bug #5)
+    orphan_sells_unmatched: int = 0 # SELL fills with no matching OPEN trade in DB (warn-only)
     snapshot_rows: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -112,11 +114,18 @@ async def run_reconcile(
     result.pending_count = len(pending)
     logger.info("found %d pending trade(s) in DB for %s", len(pending), today)
 
+    # Track permIds processed via the DB-pending path so we don't double-handle
+    # them as orphans below.
+    processed_perm_ids: set[int] = set()
     for trade in pending:
         try:
             if trade.status == "SUBMITTED":
+                if trade.perm_id:
+                    processed_perm_ids.add(trade.perm_id)
                 _reconcile_buy(trade, trades_by_perm, fills_by_perm, trade_repo, result)
             elif trade.status == "PENDING_CLOSE":
+                if trade.exit_perm_id:
+                    processed_perm_ids.add(trade.exit_perm_id)
                 _reconcile_sell(trade, trades_by_perm, fills_by_perm, trade_repo, result)
             else:
                 msg = f"trade_id={trade.id} unexpected status={trade.status}"
@@ -124,6 +133,59 @@ async def run_reconcile(
                 logger.warning(msg)
         except Exception as exc:  # noqa: BLE001
             err = f"trade_id={trade.id}: {exc!r}"
+            logger.exception(err)
+            result.errors.append(err)
+
+    # ---------------------------------------------------- orphan fills (Bug #5)
+    # Late-fill recovery: any permId present in `ib.fills()` but with no matching
+    # DB row gets back-filled straight to OPEN. Happens when a market order placed
+    # at 16:00 fills *after* the 16:25 record run, so record never saw it.
+    #
+    # Idempotent: if the orphan was inserted on a previous reconcile run, the
+    # `find_by_perm_id` check below short-circuits and the row is left alone.
+    for perm_id, fills in fills_by_perm.items():
+        if perm_id in processed_perm_ids:
+            continue  # already handled via DB-pending path above
+        if trade_repo.find_by_perm_id(perm_id) is not None:
+            continue  # previously back-filled (idempotent re-run)
+        if trade_repo.find_by_exit_perm_id(perm_id) is not None:
+            continue  # already tracked as a SELL exit_perm_id
+        try:
+            side = fills[0].execution.side
+            if side != "BOT":
+                # SELL orphans (no matching OPEN in DB) would need a buy row
+                # to attach to. For now we count + warn, no insert.
+                result.orphan_sells_unmatched += 1
+                logger.warning(
+                    "ORPHAN SELL perm_id=%d %s -- no matching OPEN trade in DB",
+                    perm_id, fills[0].contract.symbol,
+                )
+                continue
+            total_shares, avg_px, latest_time, _realized = _aggregate_fills(fills)
+            if total_shares <= 0:
+                continue
+            symbol = fills[0].contract.symbol
+            ib_order_id = fills[0].execution.orderId
+            strategy_name = (
+                getattr(fills[0].execution, "orderRef", "") or "donchian"
+            )
+            trade_repo.create_filled_buy_from_fill(
+                symbol=symbol,
+                strategy_name=strategy_name,
+                filled_quantity=int(total_shares),
+                entry_price=avg_px,
+                ib_order_id=ib_order_id,
+                submitted_at=latest_time or datetime.now(),
+                entry_time=latest_time or datetime.now(),
+                perm_id=perm_id,
+            )
+            result.orphan_fills_inserted += 1
+            logger.info(
+                "ORPHAN BUY %s perm_id=%d shares=%d avg=$%.2f -> OPEN (back-filled)",
+                symbol, perm_id, int(total_shares), avg_px,
+            )
+        except Exception as exc:  # noqa: BLE001
+            err = f"orphan perm_id={perm_id}: {exc!r}"
             logger.exception(err)
             result.errors.append(err)
 
@@ -145,11 +207,13 @@ async def run_reconcile(
     result.snapshot_rows = len(snap_rows)
 
     # ---------------------------------------------------- daily P&L
+    # Orphan back-fills count as openings for the day -- they're real positions
+    # that we just learned about late.
     daily_repo.upsert_daily(
         today=today,
         realized_pnl=account.realized_pnl,
         unrealized_pnl=account.unrealized_pnl,
-        trades_opened=result.opened,
+        trades_opened=result.opened + result.orphan_fills_inserted,
         trades_closed=result.closed,
         account_value=account.net_liquidation,
         total_cash=account.total_cash,
@@ -157,9 +221,12 @@ async def run_reconcile(
     )
 
     logger.info(
-        "reconcile done: opened=%d closed=%d cancelled=%d skipped=%d snapshot_rows=%d",
+        "reconcile done: opened=%d closed=%d cancelled=%d skipped=%d "
+        "orphan_fills=%d orphan_sells=%d snapshot_rows=%d",
         result.opened, result.closed, result.cancelled,
-        result.skipped_still_working, result.snapshot_rows,
+        result.skipped_still_working,
+        result.orphan_fills_inserted, result.orphan_sells_unmatched,
+        result.snapshot_rows,
     )
     return result
 

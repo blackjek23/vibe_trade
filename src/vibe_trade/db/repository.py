@@ -58,6 +58,47 @@ class TradeRepository:
         self.session.commit()
         return trade
 
+    def create_filled_buy_from_fill(
+        self,
+        symbol: str,
+        strategy_name: str,
+        filled_quantity: int,
+        entry_price: float,
+        ib_order_id: int,
+        submitted_at: datetime,
+        entry_time: datetime,
+        perm_id: int,
+    ) -> Trade:
+        """Insert a BUY that filled before `record` could observe it.
+
+        Used by `reconcile` when an `ib.fills()` permId has no matching DB row,
+        which happens when a market order placed at 16:00 fills *after* the
+        16:25 record run (the documented "late-fill" edge case — Bug #5).
+
+        Status goes straight to ``OPEN`` (no intermediate SUBMITTED row).
+        `requested_quantity` is set equal to `filled_quantity` because we never
+        observed the original order size — the fill is our source of truth.
+
+        Idempotency: the `perm_id` unique index guarantees one row per IB order;
+        callers should `find_by_perm_id` first to avoid a constraint violation.
+        """
+        trade = Trade(
+            symbol=symbol,
+            side="BUY",
+            strategy_name=strategy_name,
+            requested_quantity=filled_quantity,
+            filled_quantity=filled_quantity,
+            ib_order_id=ib_order_id,
+            perm_id=perm_id,
+            submitted_at=submitted_at,
+            entry_time=entry_time,
+            entry_price=entry_price,
+            status="OPEN",
+        )
+        self.session.add(trade)
+        self.session.commit()
+        return trade
+
     def mark_pending_close(
         self,
         trade_id: int,

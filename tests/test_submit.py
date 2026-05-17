@@ -366,6 +366,236 @@ class TestPerSymbolErrors:
         assert broker.orders_placed[0].symbol == "GOOG"
 
 
+class TestPlacementStatuses:
+    """Bug #1 -- PreSubmitted is a successful placement, not a failure.
+
+    A market order placed pre-RTH (16:00 IDT cron, 30 min before US open) sits
+    in IB's PreSubmitted state until the market opens. Before this fix, submit
+    counted it as failed, producing misleading 'N failed' Telegram alerts.
+    """
+
+    async def test_presubmitted_entry_counts_as_placed(self):
+        """Single BUY signal, broker returns PreSubmitted -> placed=1 failed=0."""
+        def factory(req, idx):
+            return OrderResult(
+                order_id=idx + 100, symbol=req.symbol, side=req.side,
+                quantity=req.quantity, status="PreSubmitted",
+            )
+        broker = MockBroker(_account(), [], place_result_factory=factory)
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(),
+            universe=["GOOG"],
+        )
+
+        assert result.entries_placed == 1
+        assert result.entries_failed == 0
+        assert result.errors == []
+
+    async def test_presubmitted_exit_counts_as_placed(self):
+        """SELL on a held position also accepts PreSubmitted."""
+        def factory(req, idx):
+            return OrderResult(
+                order_id=idx + 100, symbol=req.symbol, side=req.side,
+                quantity=req.quantity, status="PreSubmitted",
+            )
+        broker = MockBroker(_account(), [_position("AAPL", qty=12)],
+                            place_result_factory=factory)
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})  # SELL
+
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(),
+            universe=[],
+        )
+
+        assert result.exits_placed == 1
+        assert result.exits_failed == 0
+
+    async def test_all_signals_presubmitted_reports_zero_failed(self):
+        """Reproduces the exact Monday-2026-05-11 scenario: 9 entries, all
+        PreSubmitted. Before the fix this reported 0 placed, 9 failed.
+        """
+        def factory(req, idx):
+            return OrderResult(
+                order_id=idx + 3500, symbol=req.symbol, side=req.side,
+                quantity=req.quantity, status="PreSubmitted",
+            )
+        broker = MockBroker(_account(net_liq=100_000.0), [],
+                            place_result_factory=factory)
+        symbols = ["BA", "BLK", "CBOE", "EXPD", "FTNT", "GOOGL", "HPE", "NTAP", "NWS"]
+        # Every symbol gets a BUY-signal candle set.
+        dp = MockDataProvider({s: _candles_for(close=101.0) for s in symbols})
+
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(),
+            universe=symbols,
+        )
+
+        assert result.entries_signaled == 9
+        assert result.entries_placed == 9
+        assert result.entries_failed == 0
+        assert result.errors == []
+
+
+class TestForceTrim:
+    """Enhancement #1 -- when we hold more than max_positions, force-sell the
+    worst performers (lowest unrealized $ P&L) until we're back at the cap.
+    Trim orders carry orderRef="trim" so analytics can distinguish them.
+    """
+
+    def _losers_and_winners(self, n_losers: int, n_winners: int) -> list[Position]:
+        positions = []
+        for i in range(n_winners):
+            positions.append(Position(
+                symbol=f"WIN{i:02d}", quantity=10, avg_cost=100.0,
+                market_price=110.0, market_value=1100.0, unrealized_pnl=100.0 + i,
+            ))
+        for i in range(n_losers):
+            positions.append(Position(
+                symbol=f"LOSS{i:02d}", quantity=10, avg_cost=100.0,
+                market_price=90.0, market_value=900.0,
+                unrealized_pnl=-50.0 * (i + 1),
+            ))
+        return positions
+
+    async def test_over_cap_trims_to_max(self):
+        """Held=60 (50 winners + 10 losers), max=50 -> 10 trim SELLs placed,
+        all carrying orderRef='trim' and targeting the 10 losers."""
+        positions = self._losers_and_winners(n_losers=10, n_winners=50)
+        broker = MockBroker(_account(), positions)
+        # Empty universe + HOLD candles for held: no Donchian exits, no entries.
+        dp = MockDataProvider()  # no candles -> strategy short-circuits
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
+            universe=[],
+        )
+        assert result.exits_placed == 0
+        assert result.trim_signaled == 10
+        assert result.trim_placed == 10
+        assert result.trim_failed == 0
+        # All 10 trim orders are SELLs with order_ref="trim".
+        trim_orders = [o for o in broker.orders_placed if o.order_ref == "trim"]
+        assert len(trim_orders) == 10
+        assert all(o.side == "SELL" for o in trim_orders)
+        # Symbols should be exactly the 10 losers.
+        assert {o.symbol for o in trim_orders} == {f"LOSS{i:02d}" for i in range(10)}
+
+    async def test_at_cap_no_trim(self):
+        """Held=50, max=50 -> no trim."""
+        positions = self._losers_and_winners(n_losers=5, n_winners=45)
+        broker = MockBroker(_account(), positions)
+        dp = MockDataProvider()
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
+            universe=[],
+        )
+        assert result.trim_signaled == 0
+        assert result.trim_placed == 0
+        assert not any(o.order_ref == "trim" for o in broker.orders_placed)
+
+    async def test_donchian_exits_relieve_cap_no_trim(self):
+        """Held=55, max=50, Donchian signals 5 SELLs -> no force-trim needed."""
+        # 5 positions get a SELL signal, 50 hold.
+        positions = []
+        candle_map = {}
+        for i in range(5):
+            sym = f"EX{i:02d}"
+            positions.append(Position(
+                symbol=sym, quantity=10, avg_cost=100.0,
+                market_price=95.0, market_value=950.0, unrealized_pnl=-50.0,
+            ))
+            candle_map[sym] = _candles_for(close=98.0)  # SELL
+        for i in range(50):
+            sym = f"HOLD{i:02d}"
+            positions.append(Position(
+                symbol=sym, quantity=10, avg_cost=100.0,
+                market_price=110.0, market_value=1100.0, unrealized_pnl=100.0,
+            ))
+            candle_map[sym] = _candles_for(close=99.5)  # HOLD
+
+        broker = MockBroker(_account(), positions)
+        dp = MockDataProvider(candle_map)
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
+            universe=[],
+        )
+        assert result.exits_placed == 5      # Donchian got its 5
+        assert result.trim_signaled == 0     # nothing left to trim
+        assert result.trim_placed == 0
+
+    async def test_donchian_exits_excluded_from_trim(self):
+        """Held=60, Donchian SELLs 3 of the worst, max=50 -> trim 7 OTHER names.
+        Trim list must not overlap with Donchian exits."""
+        positions = []
+        candle_map = {}
+        # 3 worst performers; Donchian decides to exit them.
+        for i in range(3):
+            sym = f"DONCH{i:02d}"
+            positions.append(Position(
+                symbol=sym, quantity=10, avg_cost=100.0,
+                market_price=70.0, market_value=700.0,
+                unrealized_pnl=-300.0 - i,  # the 3 most negative
+            ))
+            candle_map[sym] = _candles_for(close=98.0)  # SELL
+        # 57 others with varying P&L; force-trim should pick 7 worst of these.
+        for i in range(57):
+            sym = f"OTH{i:02d}"
+            pnl = -100.0 + i  # ranges from -100 to -44 (then -43..+...)
+            positions.append(Position(
+                symbol=sym, quantity=10, avg_cost=100.0,
+                market_price=100.0 + pnl / 10, market_value=1000.0 + pnl,
+                unrealized_pnl=pnl,
+            ))
+            candle_map[sym] = _candles_for(close=99.5)  # HOLD
+
+        broker = MockBroker(_account(), positions)
+        dp = MockDataProvider(candle_map)
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
+            universe=[],
+        )
+        assert result.exits_placed == 3
+        assert result.trim_signaled == 7
+        assert result.trim_placed == 7
+        trim_orders = [o for o in broker.orders_placed if o.order_ref == "trim"]
+        donchian_orders = [
+            o for o in broker.orders_placed
+            if o.side == "SELL" and o.order_ref != "trim"
+        ]
+        assert len(trim_orders) == 7
+        assert len(donchian_orders) == 3
+        # Trim and Donchian sets must be disjoint.
+        trim_symbols = {o.symbol for o in trim_orders}
+        donchian_symbols = {o.symbol for o in donchian_orders}
+        assert not (trim_symbols & donchian_symbols)
+        # Trim should hit the 7 most-negative OTHers: OTH00..OTH06.
+        assert trim_symbols == {f"OTH{i:02d}" for i in range(7)}
+
+    async def test_trim_orders_tagged_orderref_trim(self):
+        """Single over-cap trim: verify order_ref='trim' on the placed order."""
+        positions = self._losers_and_winners(n_losers=1, n_winners=50)
+        broker = MockBroker(_account(), positions)
+        dp = MockDataProvider()
+        result = await run_submit(
+            broker=broker, strategy=DonchianStrategy(),
+            data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
+            universe=[],
+        )
+        assert result.trim_placed == 1
+        trim_orders = [o for o in broker.orders_placed if o.order_ref == "trim"]
+        assert len(trim_orders) == 1
+        assert trim_orders[0].symbol == "LOSS00"
+        assert trim_orders[0].side == "SELL"
+
+
 class TestNoDbWrites:
     """Regression guard for V2 invariant: submit must not touch the DB.
 

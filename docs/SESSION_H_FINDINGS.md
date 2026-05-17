@@ -44,7 +44,7 @@ The bot's `place_order` confirmation logic in `src/vibe_trade/broker/ib_broker.p
 - The poll loop can still wait briefly for `PendingSubmit → PreSubmitted` transition, but should not block waiting for `PreSubmitted → Submitted` (that only happens at market open).
 - Add a test in `tests/test_submit.py` that mocks IB returning `PreSubmitted` and asserts `placed=1, failed=0`.
 
-**Status:** Open. Will fix Saturday.
+**Status:** ✅ Fixed Saturday 2026-05-16 — `PLACEMENT_SUCCESS_STATUSES` frozenset in submit.py now includes `PreSubmitted`; 3 tests in test_submit.py::TestPlacementStatuses.
 
 ---
 
@@ -204,7 +204,7 @@ for fill in ib_fills:
 
 **Backfill required for Mon+Tue:** before resuming, we need a one-shot script that scans last week's fills and inserts the missing 24 rows. Otherwise the 50-position cap arithmetic is wrong tomorrow.
 
-**Status:** 🔴 Blocker. Must fix Saturday. Affects DB integrity.
+**Status:** ✅ Fixed Saturday 2026-05-16 — see reconcile.py orphan-fill loop + `create_filled_buy_from_fill()` in repository.py. 4 tests in test_reconcile.py::TestOrphanFills.
 
 ---
 
@@ -241,7 +241,7 @@ for fill in ib_fills:
    - Skip (current behavior, safe)
    - Run a "catch-up" submit pass first (risky; deferred)
 
-**Status:** 🔴 Blocker. Must fix Saturday. Silent crash is the worst failure mode.
+**Status:** ✅ Fixed Saturday 2026-05-16 — `_run_with_crash_alert` wrapper in cli.py; 5 tests in test_cli_crash_alert.py.
 
 ---
 
@@ -290,7 +290,7 @@ Example: held = 60, max = 50 → force-sell the 10 worst performers.
    - `tests/test_backtest_engine.py::test_force_trim_matches_production` — same scenario in backtest, same result.
    - One mocked-IB integration in `tests/test_submit.py` with a 60-position portfolio.
 
-**Status:** Locked. Implement Saturday.
+**Status:** ✅ Implemented Saturday 2026-05-16 — `RiskManager.select_force_trim_candidates` + force-trim phase in `submit.py` + backtest parity helper. 11 tests across test_risk_manager.py, test_submit.py, test_backtest_engine.py.
 
 ---
 

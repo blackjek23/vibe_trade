@@ -230,3 +230,30 @@ test_notify_integration.py,unit,test_format_reconcile_msg_no_trades,Reconcile me
 test_notify_integration.py,unit,test_format_reconcile_msg_errors,Reconcile message appends error list when result.errors present
 test_notify_integration.py,unit,test_format_reconcile_msg_no_pnl_row,Reconcile message omits totals lines when DailyPnL row is None
 test_notify_integration.py,unit,test_config_check_does_not_reference_nonexistent_strategy_field,Regression guard: config_check no longer references config.strategy.active (AppConfig has no strategy field)
+test_reconcile.py,TestOrphanFills,test_orphan_buy_back_filled_to_open,Bug #5: fill with no DB pending row inserted straight to OPEN via create_filled_buy_from_fill
+test_reconcile.py,TestOrphanFills,test_orphan_fills_idempotent_on_rerun,Bug #5: re-running reconcile with same orphan fill leaves a single OPEN row (perm_id unique)
+test_reconcile.py,TestOrphanFills,test_orphan_mixed_with_pending_dont_double_handle,Bug #5: mixed pending+orphan run -- pending processed normally; orphan inserted fresh
+test_reconcile.py,TestOrphanFills,test_orphan_sell_warns_but_doesnt_insert,Bug #5: SELL fills without matching OPEN trade increment orphan_sells_unmatched but insert nothing
+test_cli_crash_alert.py,TestCriticalAlertOnUncaughtException,test_connection_refused_triggers_critical_alert,Bug #6: ConnectionRefusedError in async body -> [CRITICAL] Telegram alert and re-raised
+test_cli_crash_alert.py,TestCriticalAlertOnUncaughtException,test_generic_exception_also_triggers_alert,Bug #6: any uncaught exception (not just connection) triggers [CRITICAL] alert
+test_cli_crash_alert.py,TestSuccessfulRunSendsNoAlert,test_success_path_no_critical_alert,Bug #6: clean coroutine completion sends no [CRITICAL] alert (negative case)
+test_cli_crash_alert.py,TestNotifierFailureDoesNotSwallowRealError,test_notifier_construction_failure_propagates_real_error,Bug #6: if _get_notifier itself raises during alert, original exception still re-raised
+test_cli_crash_alert.py,TestNotifierFailureDoesNotSwallowRealError,test_notify_error_send_failure_still_propagates_real_error,Bug #6: notify_error() raising (e.g. Telegram 503) does not shadow the real exception
+test_submit.py,TestPlacementStatuses,test_presubmitted_entry_counts_as_placed,Bug #1: BUY signal with broker PreSubmitted status -> placed=1 failed=0
+test_submit.py,TestPlacementStatuses,test_presubmitted_exit_counts_as_placed,Bug #1: SELL signal with broker PreSubmitted status -> placed=1 failed=0
+test_submit.py,TestPlacementStatuses,test_all_signals_presubmitted_reports_zero_failed,Bug #1: 9 BUY signals all PreSubmitted (reproduces Monday 2026-05-11) -> placed=9 failed=0
+test_risk_manager.py,TestSelectForceTrimCandidates,test_below_cap_returns_empty,Enhancement #1: held=50 max=50 -> no trim candidates
+test_risk_manager.py,TestSelectForceTrimCandidates,test_at_cap_returns_empty,Enhancement #1: held=30 max=50 -> no trim candidates
+test_risk_manager.py,TestSelectForceTrimCandidates,test_over_cap_returns_worst_by_dollar_pnl,Enhancement #1: held=60 max=50 -> 10 candidates = 10 most-negative unrealized_pnl
+test_risk_manager.py,TestSelectForceTrimCandidates,test_donchian_exits_count_toward_cap_relief,Enhancement #1: held=55 max=50 Donchian-exits=5 -> 0 additional trim candidates
+test_risk_manager.py,TestSelectForceTrimCandidates,test_donchian_exits_excluded_from_trim_candidates,Enhancement #1: held=60 max=50 Donchian-exits=3 -> 7 trim candidates disjoint from Donchian set
+test_risk_manager.py,TestSelectForceTrimCandidates,test_zero_quantity_positions_ignored,Enhancement #1: positions with qty=0 don't count toward over-cap math
+test_submit.py,TestForceTrim,test_over_cap_trims_to_max,Enhancement #1: held=60 max=50 -> 10 SELL orders with orderRef='trim' on the 10 losers
+test_submit.py,TestForceTrim,test_at_cap_no_trim,Enhancement #1: held=50 max=50 -> no trim orders placed
+test_submit.py,TestForceTrim,test_donchian_exits_relieve_cap_no_trim,Enhancement #1: held=55 with 5 Donchian SELLs -> no force-trim needed
+test_submit.py,TestForceTrim,test_donchian_exits_excluded_from_trim,Enhancement #1: held=60 Donchian-exits=3 -> 7 trim orders that don't overlap with Donchian set
+test_submit.py,TestForceTrim,test_trim_orders_tagged_orderref_trim,Enhancement #1: verify SELL order_ref='trim' tag set on force-trim orders
+test_backtest_engine.py,TestForceTrimParity,test_under_cap_returns_empty,Enhancement #1: backtest _backtest_trim_candidates with 3 positions max=5 -> []
+test_backtest_engine.py,TestForceTrimParity,test_over_cap_picks_lowest_dollar_pnl,Enhancement #1: backtest helper ranks 6 positions by current_close-avg_cost; picks 2 worst
+test_backtest_engine.py,TestForceTrimParity,test_already_exiting_excluded_and_reduces_count,Enhancement #1: backtest helper respects already_exiting set -- no double-count
+test_backtest_engine.py,TestForceTrimParity,test_normal_backtest_run_has_zero_force_trims,Enhancement #1: normal run_backtest path produces force_trim_sells=0 (sizer cap prevents over-cap)

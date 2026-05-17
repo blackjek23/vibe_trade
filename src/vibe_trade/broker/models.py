@@ -31,6 +31,10 @@ class OrderRequest:
     side: str  # "BUY" or "SELL"
     quantity: int
     order_type: str = "MKT"
+    # Tags the order with a free-form string IB stores on the execution. Used
+    # by V2 to distinguish strategy exits ("donchian") from force-trim sells
+    # ("trim"). Read back via `fill.execution.orderRef` in record / reconcile.
+    order_ref: str = ""
 
 
 @dataclass

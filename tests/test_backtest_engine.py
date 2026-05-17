@@ -211,6 +211,103 @@ class TestCapAndDedup:
         assert result.open_positions_at_end == 1
 
 
+class TestForceTrimParity:
+    """Enhancement #1 -- backtest's force-trim helper matches production
+    semantics (lowest unrealized $ P&L first, exclude already-exiting symbols).
+    """
+
+    def test_under_cap_returns_empty(self):
+        from vibe_trade.backtest.engine import _OpenPosition, _backtest_trim_candidates
+
+        ts = pd.Timestamp("2024-06-01")
+        # 3 positions, max=5 -> no trim.
+        positions = {
+            f"S{i}": _OpenPosition(symbol=f"S{i}", shares=10, avg_cost=100.0,
+                                   entry_date=date(2024, 1, 1))
+            for i in range(3)
+        }
+        bars = {
+            f"S{i}": _bars([100.0] * 200, start="2024-01-01")
+            for i in range(3)
+        }
+        result = _backtest_trim_candidates(
+            positions, ts, bars, max_positions=5, already_exiting=set(),
+        )
+        assert result == []
+
+    def test_over_cap_picks_lowest_dollar_pnl(self):
+        from vibe_trade.backtest.engine import _OpenPosition, _backtest_trim_candidates
+
+        ts = pd.Timestamp("2024-06-01")
+        # 6 positions, max=4 -> trim 2 worst by current close - avg_cost.
+        positions = {}
+        bars = {}
+        for i, (sym, avg_cost, cur_close) in enumerate([
+            ("A", 100.0, 120.0),   # +$200 (winner)
+            ("B", 100.0, 110.0),   # +$100
+            ("C", 100.0, 100.0),   # $0
+            ("D", 100.0, 90.0),    # -$100
+            ("E", 100.0, 80.0),    # -$200  <- 2nd worst
+            ("F", 100.0, 70.0),    # -$300  <- worst
+        ]):
+            positions[sym] = _OpenPosition(
+                symbol=sym, shares=10, avg_cost=avg_cost,
+                entry_date=date(2024, 1, 1),
+            )
+            # Synthesize bars where the price at `ts` is `cur_close`.
+            n_days = 200
+            close_series = [cur_close] * n_days
+            bars[sym] = _bars(close_series, start="2024-01-01")
+
+        result = _backtest_trim_candidates(
+            positions, ts, bars, max_positions=4, already_exiting=set(),
+        )
+        # Two worst by unrealized $ P&L are F and E.
+        assert set(result) == {"E", "F"}
+        # And the ordering must be most-negative-first.
+        assert result[0] == "F"
+        assert result[1] == "E"
+
+    def test_already_exiting_excluded_and_reduces_count(self):
+        from vibe_trade.backtest.engine import _OpenPosition, _backtest_trim_candidates
+
+        ts = pd.Timestamp("2024-06-01")
+        positions = {}
+        bars = {}
+        # 6 losers ranked -100, -200, ..., -600 ; max=4
+        for i in range(6):
+            sym = f"S{i}"
+            close = 100.0 - (i + 1) * 10  # i=0 -> 90, i=5 -> 40
+            positions[sym] = _OpenPosition(
+                symbol=sym, shares=10, avg_cost=100.0,
+                entry_date=date(2024, 1, 1),
+            )
+            bars[sym] = _bars([close] * 200, start="2024-01-01")
+        # Donchian "decided" to exit the 2 worst (S5, S4).
+        result = _backtest_trim_candidates(
+            positions, ts, bars,
+            max_positions=4, already_exiting={"S5", "S4"},
+        )
+        # held_after_exits = 6 - 2 = 4 = max -> no force-trim needed.
+        assert result == []
+
+    def test_normal_backtest_run_has_zero_force_trims(self):
+        """Smoke test: a normal backtest (single symbol, single breakout)
+        should never trigger force-trim because the sizer cap prevents
+        over-cap in the first place."""
+        result = run_backtest(
+            strategy=DonchianStrategy(),
+            universe=["X"],
+            start=date(2024, 1, 1),
+            end=date(2025, 1, 1),
+            bars={"X": _flat_then_breakout_bars()},
+            starting_equity=100_000.0,
+            pct_per_position=0.04,
+            max_positions=5,
+        )
+        assert result.force_trim_sells == 0
+
+
 class TestEquityCurve:
     def test_equity_curve_has_one_point_per_trading_day(self):
         df = _bars([100.0] * 50)

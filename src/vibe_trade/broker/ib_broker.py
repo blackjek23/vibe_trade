@@ -121,6 +121,8 @@ class IBBroker(BaseBroker):
         contract = await self._get_qualified_contract(request.symbol)
 
         order = MarketOrder(request.side, request.quantity)
+        if request.order_ref:
+            order.orderRef = request.order_ref
         trade = self.ib.placeOrder(contract, order)
         await self._pace()
 

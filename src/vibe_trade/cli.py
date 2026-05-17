@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import typer
 from rich.console import Console
@@ -15,6 +16,7 @@ from rich.table import Table
 from vibe_trade.config import load_config
 from vibe_trade.db.engine import init_db
 
+logger = logging.getLogger(__name__)
 app = typer.Typer(name="vibe-trade", help="Vibe Trade -- Stock Trading Bot")
 console = Console()
 
@@ -85,12 +87,59 @@ def _get_notifier(config):
     return ConsoleNotifier()
 
 
+def _run_with_crash_alert(
+    job_name: str,
+    config,
+    coro_factory: Callable[..., object],
+) -> None:
+    """Run an async job with a top-level safety net.
+
+    Wraps ``asyncio.run(coro_factory(config))`` in a try/except so that ANY
+    uncaught exception (Gateway disconnect, DB error, whatever) results in:
+
+    1. Full traceback logged to the rotating JSON file.
+    2. A ``[CRITICAL]`` Telegram alert via a *fresh* notifier (the original
+       notifier inside the failed coroutine may be bound to a closed event loop).
+    3. Re-raise so cron sees a non-zero exit code.
+
+    This is Bug #6 in docs/SESSION_H_FINDINGS.md -- before this wrapper, a
+    Gateway disconnect at 16:00 silently crashed without notification.
+    """
+    try:
+        asyncio.run(coro_factory(config))
+    except Exception as exc:
+        logger.exception("%s crashed: %s", job_name, exc)
+        _send_crash_alert(job_name, config, exc)
+        raise
+
+
+def _send_crash_alert(job_name: str, config, exc: Exception) -> None:
+    """Best-effort [CRITICAL] alert. Failures here are logged but suppressed
+    so they don't shadow the original exception.
+    """
+    try:
+        notifier = _get_notifier(config)
+        short = (str(exc) or repr(exc))[:200]
+        msg = (
+            f"[CRITICAL] {job_name} failed on {date.today().isoformat()}: "
+            f"{type(exc).__name__} -- {short}\nSee logs."
+        )
+        asyncio.run(notifier.notify_error(msg))
+    except Exception as alert_exc:  # noqa: BLE001
+        logger.exception("Failed to send crash alert for %s: %s", job_name, alert_exc)
+
+
 def _format_submit_msg(result, today) -> str:
     """Build the Telegram message for a submit run. Pure function."""
     lines = [f"[SUBMIT] {today.isoformat()}"]
     lines.append(
         f"Exits:   {result.exits_placed} placed, {result.exits_failed} failed"
     )
+    if result.trim_signaled:
+        lines.append(
+            f"Trim:    {result.trim_placed} placed, {result.trim_failed} failed "
+            f"(over-cap relief)"
+        )
     if result.entries_phase_skipped:
         lines.append(f"Entries phase skipped: {result.cap_reason}")
     else:
@@ -177,7 +226,7 @@ def submit(
     """
     config = load_config(config_path)
     _setup_logging(config.general.log_level, config.general.log_file)
-    asyncio.run(_run_submit_cli(config))
+    _run_with_crash_alert("submit", config, _run_submit_cli)
 
 
 async def _run_submit_cli(config) -> None:
@@ -248,6 +297,14 @@ def _print_submit_summary(result) -> None:
         str(result.exits_placed),
         str(result.exits_failed),
     )
+    if result.trim_signaled or result.trim_placed:
+        table.add_row(
+            "Trim",
+            "-",
+            str(result.trim_signaled),
+            str(result.trim_placed),
+            str(result.trim_failed),
+        )
     if not result.entries_phase_skipped:
         table.add_row(
             "Entries",
@@ -288,7 +345,7 @@ def record(
     config = load_config(config_path)
     _setup_logging(config.general.log_level, config.general.log_file)
     init_db(config.general.db_path)
-    asyncio.run(_run_record_cli(config))
+    _run_with_crash_alert("record", config, _run_record_cli)
 
 
 async def _run_record_cli(config) -> None:
@@ -359,7 +416,7 @@ def reconcile(
     config = load_config(config_path)
     _setup_logging(config.general.log_level, config.general.log_file)
     init_db(config.general.db_path)
-    asyncio.run(_run_reconcile_cli(config))
+    _run_with_crash_alert("reconcile", config, _run_reconcile_cli)
 
 
 async def _run_reconcile_cli(config) -> None:
@@ -415,6 +472,9 @@ async def _run_reconcile_cli(config) -> None:
     table.add_row("closed (PENDING_CLOSE -> CLOSED/PARTIAL)", str(result.closed))
     table.add_row("cancelled", str(result.cancelled))
     table.add_row("skipped (still working)", str(result.skipped_still_working))
+    table.add_row("orphan fills back-filled to OPEN", str(result.orphan_fills_inserted))
+    if result.orphan_sells_unmatched:
+        table.add_row("orphan SELLs (unmatched)", str(result.orphan_sells_unmatched))
     table.add_row("portfolio_snapshot rows", str(result.snapshot_rows))
     console.print(table)
     if result.errors:

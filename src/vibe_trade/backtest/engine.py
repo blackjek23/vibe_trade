@@ -84,6 +84,40 @@ class BacktestResult:
     open_positions_at_end: int = 0
     skipped_buys_no_cash: int = 0    # BUY signals that couldn't fill (cash short)
     skipped_buys_no_data: int = 0    # filled-day had no bar (delisting/halt)
+    force_trim_sells: int = 0        # Enhancement #1: over-cap relief sells queued
+
+
+# ----------------------------------------------------------- helpers
+def _backtest_trim_candidates(
+    positions: dict[str, "_OpenPosition"],
+    today_ts: pd.Timestamp,
+    bars: dict[str, pd.DataFrame],
+    max_positions: int,
+    already_exiting: set[str],
+) -> list[str]:
+    """Backtest analogue of `RiskManager.select_force_trim_candidates`.
+
+    Production uses IB's live ``unrealizedPNL``. Backtest uses
+    ``(current_close - avg_cost) * shares`` as the proxy. Same ranking
+    semantics (ascending dollar P&L, most-negative first). Pure function.
+    """
+    held_after_exits = len(positions) - len(already_exiting)
+    over = held_after_exits - max_positions
+    if over <= 0:
+        return []
+    eligible: list[tuple[float, str]] = []
+    for sym, pos in positions.items():
+        if sym in already_exiting:
+            continue
+        df = bars.get(sym)
+        if df is not None and today_ts in df.index:
+            cur_close = float(df.loc[today_ts, "close"])
+            pnl_dollars = (cur_close - pos.avg_cost) * pos.shares
+        else:
+            pnl_dollars = 0.0  # missing bar -> treat as flat
+        eligible.append((pnl_dollars, sym))
+    eligible.sort(key=lambda t: t[0])
+    return [s for _, s in eligible[:over]]
 
 
 # ----------------------------------------------------------- engine
@@ -135,6 +169,7 @@ def run_backtest(
     equity_points: list[tuple[pd.Timestamp, float]] = []
     skipped_no_cash = 0
     skipped_no_data = 0
+    force_trim_sells = 0
 
     universe_set = set(universe)
 
@@ -200,6 +235,7 @@ def run_backtest(
 
         # --- 3. Generate signals from today's closed bars
         # Exits phase: only held positions
+        donchian_exit_symbols: set[str] = set()
         for sym, pos in list(positions.items()):
             df = bars.get(sym)
             if df is None:
@@ -210,6 +246,21 @@ def run_backtest(
             sig = strategy.evaluate(sym, df_to_today)
             if sig.signal == SignalType.SELL:
                 pending.append(_PendingOrder(side="SELL", symbol=sym, qty=pos.shares))
+                donchian_exit_symbols.add(sym)
+
+        # Force-trim phase (Enhancement #1): if held - donchian_exits > max_positions,
+        # rank eligible positions by *current* unrealized $ P&L and queue SELL for
+        # the worst (held - donchian - max) of them. See _backtest_trim_candidates.
+        # In normal backtests this rarely fires because the sizer-side cap prevents
+        # over-cap in the first place; it's the parity safety-net for production.
+        trim_picks = _backtest_trim_candidates(
+            positions, today_ts, bars, max_positions, donchian_exit_symbols,
+        )
+        for sym in trim_picks:
+            pos = positions[sym]
+            pending.append(_PendingOrder(side="SELL", symbol=sym, qty=pos.shares))
+            donchian_exit_symbols.add(sym)  # treat as "exiting" for entries phase
+            force_trim_sells += 1
 
         # Entries phase: skip if at cap; iterate universe minus held
         if len(positions) < max_positions:
@@ -255,4 +306,5 @@ def run_backtest(
         open_positions_at_end=len(positions),
         skipped_buys_no_cash=skipped_no_cash,
         skipped_buys_no_data=skipped_no_data,
+        force_trim_sells=force_trim_sells,
     )
