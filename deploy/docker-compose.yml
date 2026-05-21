@@ -4,6 +4,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     command: ["submit", "--config", "/config/config.toml"]
+    environment:
+      - TZ=Asia/Jerusalem
     volumes:
       - vibe-data:/app/data
       - ./logs:/app/logs
@@ -17,6 +19,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     command: ["record", "--config", "/config/config.toml"]
+    environment:
+      - TZ=Asia/Jerusalem
     volumes:
       - vibe-data:/app/data
       - ./logs:/app/logs
@@ -30,6 +34,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     command: ["reconcile", "--config", "/config/config.toml"]
+    environment:
+      - TZ=Asia/Jerusalem
     volumes:
       - vibe-data:/app/data
       - ./logs:/app/logs

@@ -189,3 +189,27 @@ class TestAppConfig:
         assert c.general.mode == "paper"
         assert c.risk.pct_per_position == 0.018
         assert c.risk.max_open_positions == 50
+
+
+class TestConfigEnvVar:
+    """Hygiene #3: when no explicit path is given, load_config honours the
+    VIBE_TRADE_CONFIG env var. This lets `docker compose run` invocations that
+    override the service command (e.g. config-check, dropping --config) still
+    find the mounted /config/config.toml.
+    """
+
+    def test_env_var_used_when_no_explicit_path(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "from_env.toml"
+        cfg.write_text('[general]\nmode = "live"\n')
+        monkeypatch.setenv("VIBE_TRADE_CONFIG", str(cfg))
+        c = load_config()  # no explicit path
+        assert c.general.mode == "live"
+
+    def test_explicit_path_overrides_env_var(self, tmp_path, monkeypatch):
+        env_cfg = tmp_path / "from_env.toml"
+        env_cfg.write_text('[general]\nmode = "live"\n')
+        explicit = tmp_path / "explicit.toml"
+        explicit.write_text('[general]\nmode = "paper"\n')
+        monkeypatch.setenv("VIBE_TRADE_CONFIG", str(env_cfg))
+        c = load_config(str(explicit))
+        assert c.general.mode == "paper"  # explicit arg wins over the env var

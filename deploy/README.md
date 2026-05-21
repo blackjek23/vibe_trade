@@ -72,6 +72,8 @@ The crontab runs three jobs Mon-Fri:
 | 23:30 | reconcile | Finalize statuses, snapshot, daily P&L |
 
 **Important:** The host timezone must be `Asia/Jerusalem`. Verify with `timedatectl`.
+The containers also set `TZ=Asia/Jerusalem` (in `docker-compose.yml` and the
+`Dockerfile`), so log timestamps match IB fill times without any host-side fix.
 
 If your repo is not at `/opt/vibe-trade`, edit the paths in `crontab.example` before installing.
 
@@ -130,6 +132,10 @@ ss -tlnp | grep 7497
 # Test from inside a container
 docker compose run --rm submit config-check
 ```
+
+`config-check` reads `/config/config.toml` via the `VIBE_TRADE_CONFIG` env var
+baked into the image, so it sees the mounted config even though the `run`
+override drops the service's `--config` flag.
 
 If the port is open but the bot can't connect, check that `config.toml` has
 `host = "127.0.0.1"` and the correct port (7497 for paper, 7496 for live).

@@ -344,7 +344,9 @@ class TestPerSymbolErrors:
         assert result.entries_placed == 1  # GOOG fired
         assert broker.orders_placed[0].symbol == "GOOG"
 
-    async def test_exception_in_one_ticker_doesnt_abort(self):
+    async def test_flaky_fetch_isolated_as_data_unavailable(self):
+        # Hygiene #1/#4: a yfinance exception for one ticker is isolated by the
+        # batch fetch -> that ticker counts as data_unavailable, run continues.
         class FlakyProvider(MockDataProvider):
             async def get_candles(self, symbol, timeframe="1h", lookback_days=60):
                 if symbol == "BAD":
@@ -360,10 +362,25 @@ class TestPerSymbolErrors:
             risk_manager=_risk_mgr(),
             universe=["BAD", "GOOG"],
         )
-        assert result.entries_failed == 1
+        assert result.data_unavailable == 1
+        assert result.entries_failed == 0
         assert result.entries_placed == 1
-        assert any("BAD" in e for e in result.errors)
         assert broker.orders_placed[0].symbol == "GOOG"
+
+    async def test_data_unavailable_counted_for_empty_candles(self):
+        # Hygiene #1 bonus: universe tickers yfinance returns no bars for are
+        # tallied in result.data_unavailable (drives the skip-summary log line).
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})  # META, NVDA empty
+        result = await run_submit(
+            broker=broker,
+            strategy=DonchianStrategy(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["META", "GOOG", "NVDA"],
+        )
+        assert result.data_unavailable == 2
+        assert result.entries_placed == 1
 
 
 class TestPlacementStatuses:

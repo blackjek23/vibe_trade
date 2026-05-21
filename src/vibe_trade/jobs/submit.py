@@ -86,6 +86,8 @@ class SubmitResult:
     entries_phase_skipped: bool = False  # True if at position cap
     cap_reason: str = ""
 
+    data_unavailable: int = 0  # universe tickers yfinance returned no bars for
+
     errors: list[str] = field(default_factory=list)
 
 
@@ -213,19 +215,25 @@ async def run_submit(
         logger.info("entries phase skipped: %s", cap_check.reason)
         return result
 
+    # Prefetch every candidate's daily bars concurrently. The universe scan is
+    # the slow part of submit (~5 min sequential); bounded concurrency in
+    # get_candles_batch cuts it to ~30 s (Hygiene #4, SESSION_H_FINDINGS.md).
+    entry_symbols = [s for s in universe if s not in held_symbols]
+    candles_by_symbol = await data_provider.get_candles_batch(
+        entry_symbols, timeframe="1d", lookback_days=lookback_days
+    )
+
     # Track positions we've added during this run so the sizer's cap stays
     # honest as we place BUYs (orders placed but not yet filled still count).
     placed_this_run = 0
 
-    for symbol in universe:
-        if symbol in held_symbols:
-            continue
-
+    for symbol in entry_symbols:
         result.entries_evaluated += 1
         try:
-            candles = await data_provider.get_candles(
-                symbol, timeframe="1d", lookback_days=lookback_days
-            )
+            candles = candles_by_symbol[symbol]
+            if candles.empty:
+                result.data_unavailable += 1
+                continue
             if len(candles) < strategy.required_candles:
                 continue
 
@@ -271,5 +279,10 @@ async def run_submit(
             err = f"entry {symbol}: {exc!r}"
             logger.exception(err)
             result.errors.append(err)
+
+    if result.data_unavailable:
+        logger.info(
+            "skipped %d ticker(s) — data unavailable", result.data_unavailable
+        )
 
     return result

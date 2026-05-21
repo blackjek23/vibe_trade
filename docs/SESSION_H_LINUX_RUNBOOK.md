@@ -25,6 +25,10 @@ sudo timedatectl set-timezone Asia/Jerusalem
 timedatectl    # verify "Time zone: Asia/Jerusalem (IDT, ...)"
 ```
 
+The containers carry their own `TZ=Asia/Jerusalem` (set in `docker-compose.yml`
+and the `Dockerfile`), so in-container log timestamps are correct regardless of
+the host. Setting the host timezone still matters — cron fires in host time.
+
 ### 0.2 Confirm Docker + Compose v2
 
 ```bash

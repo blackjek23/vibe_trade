@@ -438,8 +438,18 @@ naturally if the backfill pushes us over 50 positions.
 
 Not blocking; explicitly out of scope for the Saturday triage:
 1. **Hygiene #1** — SP500 universe refresh + `.`→`-` symbol fix + yfinance retry.
+   ✅ **Done 2026-05-21** (Session H-hygiene): curated `SP500_SYMBOLS` (16
+   delistings removed, `BRK.B`/`BF.B` → hyphen form), `normalize_symbol` helper,
+   one-retry-with-backoff in `DataProvider.get_candles`, and a
+   `data_unavailable` skip-summary on `SubmitResult`.
 2. **Hygiene #2** — commit `TZ=Asia/Jerusalem` to `docker-compose.yml` + `Dockerfile`
    (currently only patched on the host).
+   ✅ **Done 2026-05-21**: `TZ` env on all three compose services + `tzdata` /
+   `ENV TZ` in the `Dockerfile`; README + runbook updated.
 3. **Hygiene #3** — `config-check` default config path inside the container.
+   ✅ **Done 2026-05-21**: `load_config` falls back to `$VIBE_TRADE_CONFIG`;
+   `ENV VIBE_TRADE_CONFIG=/config/config.toml` baked into the image.
 4. **Hygiene #4** — parallel yfinance fetches (cut the ~5-min universe scan).
+   ✅ **Done 2026-05-21**: `DataProvider.get_candles_batch` (bounded-concurrency
+   `asyncio.gather`); submit's entries phase prefetches the universe in one batch.
 5. **Telegram token rotation** — user will rotate when the bot is feature-complete.

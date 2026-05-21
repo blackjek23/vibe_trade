@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -123,9 +124,15 @@ class AppConfig(BaseSettings):
 
 
 def load_config(config_path: str | Path | None = None) -> AppConfig:
-    """Load config from TOML file, falling back to defaults."""
+    """Load config from TOML file, falling back to defaults.
+
+    When no explicit path is given, the ``VIBE_TRADE_CONFIG`` env var is used
+    if set, then ``config/config.toml``. The env var lets ``docker compose run``
+    invocations that override the service command (e.g. ``config-check``) still
+    find the mounted config — Hygiene #3 in docs/SESSION_H_FINDINGS.md.
+    """
     if config_path is None:
-        config_path = Path("config/config.toml")
+        config_path = Path(os.environ.get("VIBE_TRADE_CONFIG", "config/config.toml"))
     else:
         config_path = Path(config_path)
 

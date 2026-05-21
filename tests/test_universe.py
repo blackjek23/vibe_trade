@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from vibe_trade.config import UniverseConfig
-from vibe_trade.data.universe import SP500_SYMBOLS, load_universe
+from vibe_trade.data.universe import SP500_SYMBOLS, load_universe, normalize_symbol
 
 
 class TestUniverseUniqueness:
@@ -34,3 +34,36 @@ class TestUniverseUniqueness:
     def test_load_universe_custom_empty(self):
         cfg = UniverseConfig(source="custom", custom_symbols=[])
         assert load_universe(cfg) == []
+
+
+class TestSymbolNormalization:
+    """Hygiene #1: yfinance expects class shares with a hyphen (BRK-B), not a
+    dot (BRK.B). A dotted symbol silently returns no bars. normalize_symbol
+    converts the form; the static list is already curated to the hyphen form.
+    """
+
+    def test_normalize_converts_dot_to_hyphen(self):
+        assert normalize_symbol("BRK.B") == "BRK-B"
+        assert normalize_symbol("BF.B") == "BF-B"
+
+    def test_normalize_uppercases_and_strips(self):
+        assert normalize_symbol(" brk.b ") == "BRK-B"
+
+    def test_normalize_leaves_plain_symbol_untouched(self):
+        assert normalize_symbol("AAPL") == "AAPL"
+
+    def test_sp500_list_uses_yfinance_hyphen_form(self):
+        dotted = [s for s in SP500_SYMBOLS if "." in s]
+        assert dotted == [], f"dotted tickers will fail yfinance: {dotted}"
+
+    def test_sp500_list_excludes_confirmed_delistings(self):
+        delisted = {
+            "ATVI", "FRC", "SIVB", "FBHS", "CDAY", "CTLT", "DFS", "PARA",
+            "PEAK", "WRK", "PXD", "FLT", "PKI", "RE", "DISH", "ANSS",
+        }
+        still_present = delisted & set(SP500_SYMBOLS)
+        assert still_present == set(), f"delisted tickers still listed: {still_present}"
+
+    def test_load_universe_normalizes_dotted_custom_symbol(self):
+        cfg = UniverseConfig(source="custom", custom_symbols=["BRK.B", "AAPL"])
+        assert load_universe(cfg) == ["BRK-B", "AAPL"]

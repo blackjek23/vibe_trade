@@ -33,6 +33,8 @@ test_config.py,TestRiskConfig,test_no_v1_trailing_stop_field,Regression guard: V
 test_config.py,TestAppConfig,test_defaults,Verify all sub-configs wire up correctly with defaults
 test_config.py,TestAppConfig,test_load_config_no_file,load_config() returns defaults when config file doesn't exist
 test_config.py,TestAppConfig,test_load_config_from_example,load_config() correctly loads from the example TOML file
+test_config.py,TestConfigEnvVar,test_env_var_used_when_no_explicit_path,Hygiene #3: load_config() with no arg honours VIBE_TRADE_CONFIG env var
+test_config.py,TestConfigEnvVar,test_explicit_path_overrides_env_var,Hygiene #3: explicit config path arg takes precedence over VIBE_TRADE_CONFIG
 test_db.py,TestCreateSubmittedBuy,test_creates_row_with_submitted_status,V2: record-job inserts a SUBMITTED BUY with requested_quantity + ib_order_id + submitted_at
 test_db.py,TestCreateSubmittedBuy,test_stores_perm_id_when_provided,V2: create_submitted_buy accepts and stores perm_id (IB persistent ID for cross-process dedup)
 test_db.py,TestMarkPendingClose,test_happy_path,V2: record-job flips an OPEN trade to PENDING_CLOSE with exit_ib_order_id + exit_submitted_at
@@ -81,6 +83,12 @@ test_universe.py,TestUniverseUniqueness,test_sp500_list_has_no_duplicates,SP500_
 test_universe.py,TestUniverseUniqueness,test_load_universe_sp500_is_unique,load_universe(sp500) returns unique symbols — no dup scan passes
 test_universe.py,TestUniverseUniqueness,test_load_universe_custom_dedupes_input,Custom universe with duplicate entries is deduplicated on load
 test_universe.py,TestUniverseUniqueness,test_load_universe_custom_empty,Empty custom_symbols returns [] (not an error)
+test_universe.py,TestSymbolNormalization,test_normalize_converts_dot_to_hyphen,Hygiene #1: normalize_symbol converts BRK.B -> BRK-B for yfinance
+test_universe.py,TestSymbolNormalization,test_normalize_uppercases_and_strips,Hygiene #1: normalize_symbol uppercases and strips whitespace
+test_universe.py,TestSymbolNormalization,test_normalize_leaves_plain_symbol_untouched,Hygiene #1: plain ticker like AAPL passes through normalize_symbol unchanged
+test_universe.py,TestSymbolNormalization,test_sp500_list_uses_yfinance_hyphen_form,Hygiene #1: SP500_SYMBOLS contains no dotted tickers (would fail yfinance)
+test_universe.py,TestSymbolNormalization,test_sp500_list_excludes_confirmed_delistings,Hygiene #1: 16 confirmed-delisted tickers removed from SP500_SYMBOLS
+test_universe.py,TestSymbolNormalization,test_load_universe_normalizes_dotted_custom_symbol,Hygiene #1: load_universe normalizes a dotted custom symbol to hyphen form
 test_position_sizer.py,TestHappyPath,test_typical_sizing_at_default_pct,V2: $100K * 1.8% / $50 = 36 shares (cents-based to defeat float imprecision)
 test_position_sizer.py,TestHappyPath,test_floors_to_whole_share,V2: $1800/$77 = 23.37 floors to 23 (no fractional shares)
 test_position_sizer.py,TestHappyPath,test_uses_net_liq_not_cash,V2: $95381 * 1.8% / $26.09 = 65 shares (real-world numbers)
@@ -134,7 +142,8 @@ test_submit.py,TestEntriesPhase,test_sizer_skips_oversized_share,1 share > 1.8% 
 test_submit.py,TestPositionCap,test_at_cap_skips_entries_phase_entirely,At 50/50 cap -> entries phase short-circuits no candles fetched
 test_submit.py,TestPositionCap,test_buys_during_run_count_toward_cap,Live count: BUYs placed this run prevent further BUYs at cap
 test_submit.py,TestPerSymbolErrors,test_data_fetch_failure_doesnt_abort,Empty candles for one ticker -> processed as HOLD others continue
-test_submit.py,TestPerSymbolErrors,test_exception_in_one_ticker_doesnt_abort,RuntimeError on one symbol -> recorded in errors[] others continue
+test_submit.py,TestPerSymbolErrors,test_flaky_fetch_isolated_as_data_unavailable,Hygiene #1/#4: yfinance exception isolated by batch fetch -> data_unavailable not entries_failed
+test_submit.py,TestPerSymbolErrors,test_data_unavailable_counted_for_empty_candles,Hygiene #1: universe tickers with no bars tallied in result.data_unavailable
 test_submit.py,TestNoDbWrites,test_run_submit_signature_has_no_db_param,Regression guard: V2 invariant -- run_submit signature must not accept session/db params
 test_db.py,TestTradeReads,test_find_by_perm_id_returns_match,V2: find_by_perm_id returns the trade with matching perm_id (cross-process dedup)
 test_db.py,TestTradeReads,test_find_by_perm_id_returns_none_for_missing,V2: find_by_perm_id returns None when no row matches
@@ -257,3 +266,9 @@ test_backtest_engine.py,TestForceTrimParity,test_under_cap_returns_empty,Enhance
 test_backtest_engine.py,TestForceTrimParity,test_over_cap_picks_lowest_dollar_pnl,Enhancement #1: backtest helper ranks 6 positions by current_close-avg_cost; picks 2 worst
 test_backtest_engine.py,TestForceTrimParity,test_already_exiting_excluded_and_reduces_count,Enhancement #1: backtest helper respects already_exiting set -- no double-count
 test_backtest_engine.py,TestForceTrimParity,test_normal_backtest_run_has_zero_force_trims,Enhancement #1: normal run_backtest path produces force_trim_sells=0 (sizer cap prevents over-cap)
+test_provider.py,TestRetry,test_retries_then_succeeds,Hygiene #1: get_candles retries once after an empty result and succeeds
+test_provider.py,TestRetry,test_empty_after_retries_exhausted,Hygiene #1: get_candles returns empty DataFrame after both attempts fail
+test_provider.py,TestRetry,test_retries_on_exception,Hygiene #1: get_candles retries after a yfinance exception (curl timeout)
+test_provider.py,TestBatch,test_returns_every_symbol,Hygiene #4: get_candles_batch returns a DataFrame for every input symbol
+test_provider.py,TestBatch,test_isolates_per_symbol_failure,Hygiene #4: one symbol's fetch failure -> empty df, neighbours unaffected
+test_provider.py,TestBatch,test_concurrency_is_bounded,Hygiene #4: get_candles_batch never exceeds max_concurrency in-flight fetches
