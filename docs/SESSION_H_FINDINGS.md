@@ -1,7 +1,10 @@
 # Session H — Live Paper Findings
 
-> **Status:** Open. Live paper week in progress.
-> **Plan:** accumulate findings Mon–Fri → fix them Saturday → re-run two more days of paper to validate fixes.
+> **Status:** ✅ CLOSED 2026-05-21. All three blockers + Enhancement #1 fixed
+> Saturday 2026-05-16, validated live Mon–Wed 2026-05-18..20. Tier-3 hygiene
+> items deferred to a follow-up session (see bottom).
+> **Plan (executed):** accumulate findings Mon–Fri → fix them Saturday → validate
+> two+ more paper days. Done.
 >
 > **Severity scale:**
 > - 🔴 **Blocker** — incorrect behavior, wrong P&L, missed fills, data corruption
@@ -382,10 +385,61 @@ naturally if the backfill pushes us over 50 positions.
 - 16:25 record: `fills seen = 11` ✓.
 - 23:30 reconcile: `opened=11` ✓ — DB synced for Fri.
 
-### Week totals
+### Week 1 totals (pre-fix)
 - Signals generated: 69
 - Properly tracked in DB: 45 (Thu + Fri)
 - **Missing from DB but exist in IB ledger: 24 (Mon + Tue)**
 - Cron crashes: 2 (Wed submit + record)
 - Notification failures: 2 (Wed crashes)
 - Paper account reset events: 1 (Wed→Thu)
+
+---
+
+## Validation week (post-fix, fixes deployed 2026-05-16)
+
+### 2026-05-18 (Monday) — clean
+- submit: 45 held → 3 signaled, **3 placed, 0 failed** (Bug #1 ✓ — pre-fix this
+  would have read "0 placed, 3 failed").
+- 23:30 reconcile: `opened=3 orphan_fills=0` — `opened` matches `placed` exactly,
+  no DB drift (Bug #5 ✓).
+
+### 2026-05-19 (Tuesday) — clean
+- submit: 48 held → 16 signaled, **2 placed, 0 failed** (14 BUYs skipped by the
+  sizer because 48 + 2 = 50 = cap — correct, not failures).
+- 23:30 reconcile: `opened=2 orphan_fills=0`. Account now at the 50 cap.
+
+### 2026-05-20 (Wednesday) — Gateway outage, handled correctly
+- 16:00 submit + 16:35 record both hit `ConnectionRefusedError` (Gateway down —
+  second Wednesday in a row; likely IB weekly paper maintenance).
+- **Both jobs sent a `[CRITICAL]` Telegram alert** before exiting non-zero
+  (`cli.py | submit crashed` / `record crashed` → `sendMessage HTTP 200`).
+  Bug #6 ✓ — compare to 5/13 which was completely silent.
+- User manually re-ran submit at 17:59; account at cap (50/50) so entries
+  skipped, no orders placed. 23:30 reconcile clean.
+
+### Validation verdict
+- **Bug #1** ✓ — `Failed=0` both clean days; misleading "N failed" gone.
+- **Bug #5** ✓ — code live (`orphan_fills` field in every reconcile line);
+  `opened` == `placed` exactly, zero drift. The back-fill path didn't need to
+  fire (fills landed before 16:25 both days) but is unit-test-covered.
+- **Bug #6** ✓ — proven live on the 5/20 outage; two crash alerts delivered.
+- **Force-trim** ✓ — deployed, correctly never triggered (never went over the
+  50 cap; the sizer prevents over-cap, so trim is a safety net only).
+
+### Carry-forward observations (not bugs)
+- **Wednesday Gateway outages** — 5/13 and 5/20 both ~16:00. Plan a manual
+  Wednesday rerun, or shift that day's cron later.
+- **Portfolio full (50/50)** — entries skipped since 5/19; no Donchian SELL
+  signals firing, so the book is static until something exits. Expected.
+
+---
+
+## Deferred to a follow-up session (Tier-3 hygiene)
+
+Not blocking; explicitly out of scope for the Saturday triage:
+1. **Hygiene #1** — SP500 universe refresh + `.`→`-` symbol fix + yfinance retry.
+2. **Hygiene #2** — commit `TZ=Asia/Jerusalem` to `docker-compose.yml` + `Dockerfile`
+   (currently only patched on the host).
+3. **Hygiene #3** — `config-check` default config path inside the container.
+4. **Hygiene #4** — parallel yfinance fetches (cut the ~5-min universe scan).
+5. **Telegram token rotation** — user will rotate when the bot is feature-complete.

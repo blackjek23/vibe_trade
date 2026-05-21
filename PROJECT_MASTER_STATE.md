@@ -4,10 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-16 (Saturday triage — Tier 1 blockers + Tier 2 force-trim landed)
-**HEAD commit:** (to be filled at commit time)
-**Tests:** ~253 expected (231 + 22 new this session — Bug #5: 4, Bug #6: 5, Bug #1: 3, Enhancement #1: 10)
-**Branch:** `main` — Saturday triage merged. Local pytest run was skipped (env constraint); validation runs Mon 2026-05-18 + Tue 2026-05-19.
+**Last updated:** 2026-05-21 (Session H closed — fixes validated live Mon–Wed 2026-05-18..20)
+**HEAD commit:** `2de11e1` Session H Saturday triage: Tier-1 blockers + Tier-2 force-trim
+**Tests:** ~253 (231 + 22 new — Bug #5: 4, Bug #6: 5, Bug #1: 3, Enhancement #1: 10)
+**Branch:** `main` — synced with `origin/main`.
 
 ---
 
@@ -83,11 +83,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **F** — Notifications + logging | `f1eb3b3` | Telegram messages from submit/record/reconcile (with daily summary table); JSON-to-file logs with daily rotation, 7-day retention. Fixed pre-existing `panic` `_get_notifier` and `config-check` strategy bugs. 231 tests. |
 | (Session F follow-up) | `a5b5153` | Three notification scratches (`scratch_notify_submit/record/reconcile.py`) using notifier `client_id=8` and `data/test_paper.db`. Smoke test pending. |
 | **G** — Docker deployment | `8559adc` | Single Docker image + three compose services (submit/record/reconcile). `network_mode: host` for IB Gateway. Host crontab triggers `docker compose run --rm`. Includes Dockerfile (uv), docker-compose.yml, crontab.example, smoke-test.sh, .env.example, deploy/README.md, .dockerignore. No Python code changes. |
-| **H (partial)** — Live paper week + Tier-1 fixes + Enhancement #1 | (Saturday 2026-05-16) | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. Findings + decisions in `docs/SESSION_H_FINDINGS.md`. 22 new tests. Pending: two validation paper days (Mon 2026-05-18, Tue 2026-05-19), then hygiene items (parallel yfinance, universe refresh, TZ env, config-check default) before Session H closes formally. |
-
-### In progress
-
-- **Session H (validation)** — two paper days Mon 2026-05-18 + Tue 2026-05-19 with the Saturday fixes deployed, then close formally.
+| **H** — Live paper week + Tier-1 fixes + Enhancement #1 | `2de11e1` | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement, fixed Saturday 2026-05-16: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. **Validated live Mon–Wed 2026-05-18..20:** Bug #1 confirmed (`Failed=0`), Bug #5 confirmed (`opened` == `placed`, zero drift), Bug #6 proven on the 5/20 Gateway outage (two `[CRITICAL]` alerts delivered where 5/13 was silent), force-trim deployed (never triggered — book never exceeded the 50 cap). 22 new tests. Full findings + validation log in `docs/SESSION_H_FINDINGS.md`. Tier-3 hygiene deferred. |
 
 ### Not started (per ROADMAP)
 
@@ -249,26 +245,33 @@ cd deploy && ./smoke-test.sh                         # run all three sequentiall
 
 ### Immediate next concrete deliverable
 
-**Session H validation week (Mon 2026-05-18 + Tue 2026-05-19).** Tier-1 fixes (Bug #1, #5, #6) and Tier-2 force-trim landed Saturday. Now we run two more paper days with the fixes in place and confirm:
+**Session H is CLOSED** (2026-05-21). Bot is running unattended on Linux + cron;
+fixes validated live. Pick the next session — recommended order:
 
-- Submit Telegram says `Placed=N, Failed=0` even pre-RTH (Bug #1 verified live)
-- Reconcile `opened` count matches submit's `Placed` count (Bug #5 verified — no orphan drift; if any orphans appear they're back-filled)
-- If we run anywhere over 50 positions at the start of a day, force-trim engages with `orderRef="trim"`
-- No `[CRITICAL]` Telegram alerts (Bug #6 verified by absence)
+**Session H-hygiene (small, ~1–2 h)** — Tier-3 items deferred from the Saturday
+triage. Worth doing before more feature work because two of them are operational
+papercuts already biting:
+1. SP500 universe refresh + `.`→`-` symbol fix + yfinance retry (~30 stale tickers/run).
+2. Commit `TZ=Asia/Jerusalem` to `docker-compose.yml` + `Dockerfile` (currently only
+   patched on the host — a fresh clone would regress to UTC).
+3. `config-check` default config path inside the container.
+4. Parallel yfinance fetches — cut the ~5-min universe scan to ~30 s.
+Details in `docs/SESSION_H_FINDINGS.md` → "Deferred to a follow-up session".
 
-**Deploy on Linux host:**
-```bash
-cd /opt/vibe-trade && git pull
-cd deploy && docker compose build
-docker compose run --rm reconcile --config /config/config.toml   # one-shot to absorb any pre-existing orphans
-```
+**Then Session J — Manual override CLI:** `close-position SYMBOL`,
+`cancel-pending [perm-id]`, `replay-fills DATE`. Thin typer wrappers + tests.
 
-If the two days pass clean → Session H closes. Tier-3 hygiene (parallel yfinance fetches, SP500 universe refresh, TZ env in compose, config-check default path) is the next session.
+### Known operational notes (carry forward)
 
-### After Session H (per ROADMAP)
+- **Wednesday Gateway outages** — IB paper Gateway went down ~16:00 on both
+  2026-05-13 and 2026-05-20. Likely IB weekly paper maintenance. The bot now
+  alerts via `[CRITICAL]` Telegram and exits non-zero (Bug #6 fix); operator
+  should manually rerun that day or shift Wednesday's cron later.
+- **Portfolio at the 50 cap** — since 2026-05-19 the book is full; entries are
+  skipped until Donchian SELL signals free up slots. Expected, not a bug.
 
-- **Session H-hygiene** (small): Tier-3 items from findings doc — parallel yfinance, universe refresh, TZ env in compose, config-check default
-- **Session J:** Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
+### After the above (per ROADMAP)
+
 - **Session K:** Performance dashboard (`vibe-trade report`)
 
 ### Open questions deferred to later sessions
