@@ -5,13 +5,12 @@
 > per the protocol at the bottom.
 
 **Last updated:** 2026-05-21 (Session H-hygiene — Tier-3 items closed)
-**HEAD commit:** `9131fe3` Close Session H — fixes validated live 2026-05-18..20
-  (Session H-hygiene work lives on branch `session-h-hygiene`, not yet merged)
+**HEAD commit:** `34068da` Session H-hygiene: close the four Tier-3 deferred items
 **Tests:** 273 collected (269 passing; +15 net this session). 4 failures are
   pre-existing and unrelated to this work — 3× `test_backtest_plot` (matplotlib
   not installed in the venv) and 1× `test_risk_manager` (buggy test helper
   divides by `qty=0`). See §7.
-**Branch:** `session-h-hygiene` — Tier-3 hygiene, pending review/merge.
+**Branch:** `main` — synced with `origin/main`.
 
 ---
 
@@ -251,19 +250,18 @@ cd deploy && ./smoke-test.sh                         # run all three sequentiall
 ### Immediate next concrete deliverable
 
 **Session H is fully CLOSED** (2026-05-21). Tier-1/2 fixes validated live;
-Tier-3 hygiene done on branch `session-h-hygiene` (review + merge pending).
+Tier-3 hygiene done and merged to `main` (`34068da`).
 
 **Session J — Manual override CLI:** `close-position SYMBOL`,
 `cancel-pending [perm-id]`, `replay-fills DATE`. Thin typer wrappers + tests.
 
-**Before Session J — two loose ends worth a few minutes:**
-1. **Merge `session-h-hygiene`** into `main` once reviewed.
-2. **Fix the test environment.** The venv is missing `pytest-asyncio` (added back
-   manually this session so tests could run) and `matplotlib`. The uncommitted
-   `pyproject.toml`/`uv.lock` changes bumped `pytest` into the *main* deps —
-   reconcile that and run `uv pip install -e ".[dev]"` so the venv has the full
-   dev set. Also fix `test_risk_manager.py::_pos_with_pnl` — it divides by
-   `qty`, crashing the `qty=0` case (1 failing test, pre-existing).
+**Before Session J — one loose end worth a few minutes:**
+- **Fix the test environment.** The venv is missing `pytest-asyncio` (added back
+  manually during Session H-hygiene so tests could run) and `matplotlib`. The
+  uncommitted `pyproject.toml`/`uv.lock` changes bumped `pytest` into the *main*
+  deps — reconcile that and run `uv pip install -e ".[dev]"` so the venv has the
+  full dev set. Also fix `test_risk_manager.py::_pos_with_pnl` — it divides by
+  `qty`, crashing the `qty=0` case (1 failing test, pre-existing).
 
 ### Known operational notes (carry forward)
 
