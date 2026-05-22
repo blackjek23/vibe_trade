@@ -179,11 +179,18 @@ class IBBroker(BaseBroker):
         )
 
     async def get_open_orders(self) -> list[OpenOrder]:
+        # reqAllOpenOrders pulls orders from EVERY API client; without it
+        # ib.openTrades() is scoped to this connection, so an override command
+        # (client 4) cannot see orders placed by submit (client 1).
+        await self.ib.reqAllOpenOrdersAsync()
         # openTrades() carries contract + order + orderStatus together;
         # openOrders() alone loses the contract symbol.
         return [self._to_open_order(t) for t in self.ib.openTrades()]
 
     async def cancel_orders_for_symbol(self, symbol: str) -> list[OpenOrder]:
+        # Refresh across clients first (see get_open_orders) so a cross-client
+        # order is visible to cancel.
+        await self.ib.reqAllOpenOrdersAsync()
         cancelled: list[OpenOrder] = []
         for trade in self.ib.openTrades():
             if trade.contract.symbol != symbol:

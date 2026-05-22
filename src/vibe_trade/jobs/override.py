@@ -10,9 +10,16 @@ Two commands, both ad-hoc and run by a human watching the terminal:
 Both follow submit's invariant: **no DB writes**. The next `record` / `reconcile`
 run picks up the resulting fills via `ib.fills()` (orphan back-fill, Bug #5).
 
-`OVERRIDE_CLIENT_ID` (4) is distinct from submit=1 / record=2 / reconcile=3 /
-notifier=8. The two override commands never run concurrently with each other,
-so they share one id.
+Client IDs:
+- `close-position` connects as `OVERRIDE_CLIENT_ID` (4) -- distinct from
+  submit=1 / record=2 / reconcile=3 / notifier=8. It places its own order and
+  reads account-wide positions, so it needs no special id.
+- `cancel-pending` connects as **submit's** id (1). IB only honours a
+  `cancelOrder` from the client that placed the order (or the master client);
+  `ib.openTrades()` is likewise client-scoped. Since submit is the only thing
+  that places working orders, cancel-pending must act *as* submit to see and
+  cancel them. submit is short-lived (done seconds after 16:00) so an ad-hoc
+  cancel-pending will not collide; if it does, the connect fails loudly.
 """
 
 from __future__ import annotations

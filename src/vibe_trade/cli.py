@@ -977,16 +977,20 @@ def cancel_pending(
 
 async def _run_cancel_pending_cli(config, symbol: str | None) -> None:
     from vibe_trade.broker.ib_broker import IBBroker
-    from vibe_trade.jobs.override import OVERRIDE_CLIENT_ID, run_cancel_pending
+    from vibe_trade.jobs.override import run_cancel_pending
+    from vibe_trade.jobs.submit import SUBMIT_CLIENT_ID
 
+    # Connect as submit's client: IB only honours cancelOrder from the client
+    # that placed the order, and openTrades() is client-scoped. See the module
+    # docstring in jobs/override.py.
     broker_config = config.broker.model_copy()
-    broker_config.client_id = OVERRIDE_CLIENT_ID
+    broker_config.client_id = SUBMIT_CLIENT_ID
     broker = IBBroker(broker_config, mode=config.general.mode)
     notifier = _get_notifier(config)
 
     console.print(
         f"[bold]Cancel pending[/bold] mode={config.general.mode} "
-        f"client_id={OVERRIDE_CLIENT_ID}"
+        f"client_id={SUBMIT_CLIENT_ID}"
     )
 
     await broker.connect()

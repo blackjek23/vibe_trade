@@ -172,11 +172,20 @@ class _FakeTrade:
 
 
 class _FakeIBWithOrders:
-    """IB stand-in exposing openTrades() / cancelOrder() for override tests."""
+    """IB stand-in exposing openTrades() / cancelOrder() for override tests.
+
+    `reqAllOpenOrdersAsync` is the cross-client refresh -- it stands in for the
+    TWS call that pulls every client's open orders, not just the current one.
+    """
 
     def __init__(self, trades: list[_FakeTrade]):
         self._trades = trades
         self.cancelled: list[_FakeOrder] = []
+        self.req_all_calls = 0
+
+    async def reqAllOpenOrdersAsync(self):
+        self.req_all_calls += 1
+        return [t.order for t in self._trades]
 
     def openTrades(self) -> list[_FakeTrade]:
         return list(self._trades)
@@ -206,6 +215,18 @@ class TestGetOpenOrders:
         broker.ib = _FakeIBWithOrders([])
 
         assert await broker.get_open_orders() == []
+
+    async def test_refreshes_all_clients_before_listing(self):
+        # Cross-client fix: ib.openTrades() is scoped to the connecting client;
+        # get_open_orders must reqAllOpenOrders first so a client-4 cancel-pending
+        # sees orders placed by client-1 submit.
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIBWithOrders([_FakeTrade("AAPL", "BUY", 10, 111, "PreSubmitted")])
+        broker.ib = fake
+
+        await broker.get_open_orders()
+
+        assert fake.req_all_calls == 1
 
 
 class TestCancelOrdersForSymbol:
@@ -245,6 +266,16 @@ class TestCancelOrdersForSymbol:
 
         assert cancelled == []
         assert fake.cancelled == []
+
+    async def test_refreshes_all_clients_before_cancelling(self):
+        # Same cross-client fix: cancel must see other clients' orders first.
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIBWithOrders([_FakeTrade("AAPL", "BUY", 10, 111, "PreSubmitted")])
+        broker.ib = fake
+
+        await broker.cancel_orders_for_symbol("AAPL")
+
+        assert fake.req_all_calls == 1
 
 
 class TestOrderPacing:
