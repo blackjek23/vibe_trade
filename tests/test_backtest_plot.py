@@ -10,6 +10,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+# Plotting is an optional dependency (the `plot` extra). Skip cleanly when absent.
+pytest.importorskip("matplotlib", reason="matplotlib not installed (optional 'plot' extra)")
+
 
 def _equity(values: list[float], start: str = "2024-01-01") -> pd.Series:
     return pd.Series(

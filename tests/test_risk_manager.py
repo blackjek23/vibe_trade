@@ -97,7 +97,7 @@ def _pos_with_pnl(symbol: str, pnl: float, qty: int = 10) -> Position:
         symbol=symbol,
         quantity=qty,
         avg_cost=100.0,
-        market_price=100.0 + pnl / qty,
+        market_price=100.0 + (pnl / qty if qty else 0.0),
         market_value=qty * 100.0 + pnl,
         unrealized_pnl=pnl,
     )
