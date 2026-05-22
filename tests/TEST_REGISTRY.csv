@@ -272,3 +272,18 @@ test_provider.py,TestRetry,test_retries_on_exception,Hygiene #1: get_candles ret
 test_provider.py,TestBatch,test_returns_every_symbol,Hygiene #4: get_candles_batch returns a DataFrame for every input symbol
 test_provider.py,TestBatch,test_isolates_per_symbol_failure,Hygiene #4: one symbol's fetch failure -> empty df, neighbours unaffected
 test_provider.py,TestBatch,test_concurrency_is_bounded,Hygiene #4: get_candles_batch never exceeds max_concurrency in-flight fetches
+test_override.py,TestClosePosition,test_places_full_position_sell,close-position places a market SELL for the full held quantity
+test_override.py,TestClosePosition,test_tags_order_ref_manual,close-position SELL is tagged order_ref=manual
+test_override.py,TestClosePosition,test_symbol_not_held_returns_not_found,close-position on an unheld symbol returns found=False and places no order
+test_override.py,TestClosePosition,test_zero_quantity_treated_as_not_held,close-position treats a zero-qty position as not held
+test_override.py,TestClosePosition,test_declined_confirmation_aborts_without_order,close-position with a declined confirm callback aborts and places no order
+test_override.py,TestClosePosition,test_confirm_callback_receives_symbol_and_quantity,close-position passes symbol and share count to the confirm callback
+test_override.py,TestCancelPending,test_no_symbol_lists_without_cancelling,cancel-pending with no symbol lists working orders and cancels nothing
+test_override.py,TestCancelPending,test_with_symbol_cancels_matching_order,cancel-pending with a symbol cancels that symbol's working order
+test_override.py,TestCancelPending,test_symbol_with_no_working_order_reports_no_match,cancel-pending reports matched=False when the symbol has no working order
+test_override.py,TestCancelPending,test_cancels_multiple_orders_for_one_symbol,cancel-pending cancels every working order for a symbol
+test_broker.py,TestGetOpenOrders,test_maps_open_trades_to_open_orders,get_open_orders maps ib.openTrades() into OpenOrder models
+test_broker.py,TestGetOpenOrders,test_no_open_trades_returns_empty,get_open_orders returns an empty list when no working orders exist
+test_broker.py,TestCancelOrdersForSymbol,test_cancels_only_matching_symbol,cancel_orders_for_symbol cancels only orders matching the symbol
+test_broker.py,TestCancelOrdersForSymbol,test_cancels_all_matches_for_symbol,cancel_orders_for_symbol cancels every working order for the symbol
+test_broker.py,TestCancelOrdersForSymbol,test_no_match_cancels_nothing,cancel_orders_for_symbol cancels nothing when the symbol has no orders

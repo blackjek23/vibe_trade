@@ -4,9 +4,10 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-21 (Session H-hygiene — Tier-3 items closed)
-**HEAD commit:** `34068da` Session H-hygiene: close the four Tier-3 deferred items
-**Tests:** 273 collected (269 passing; +15 net this session). 4 failures are
+**Last updated:** 2026-05-22 (Session J — manual override CLI)
+**HEAD commit:** `cf4cff9` Sync PROJECT_MASTER_STATE header after Session H-hygiene merge
+  (Session J changes uncommitted at time of writing)
+**Tests:** 288 collected (284 passing; +15 net this session). 4 failures are
   pre-existing and unrelated to this work — 3× `test_backtest_plot` (matplotlib
   not installed in the venv) and 1× `test_risk_manager` (buggy test helper
   divides by `qty=0`). See §7.
@@ -87,11 +88,11 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | (Session F follow-up) | `a5b5153` | Three notification scratches (`scratch_notify_submit/record/reconcile.py`) using notifier `client_id=8` and `data/test_paper.db`. Smoke test pending. |
 | **G** — Docker deployment | `8559adc` | Single Docker image + three compose services (submit/record/reconcile). `network_mode: host` for IB Gateway. Host crontab triggers `docker compose run --rm`. Includes Dockerfile (uv), docker-compose.yml, crontab.example, smoke-test.sh, .env.example, deploy/README.md, .dockerignore. No Python code changes. |
 | **H-hygiene** — Tier-3 cleanup | `session-h-hygiene` branch | The four deferred Tier-3 items from the Saturday triage. **#1** curated `SP500_SYMBOLS` (16 delistings removed, `BRK.B`/`BF.B` → hyphen form) + `normalize_symbol` `.`→`-` helper + one-retry-with-backoff in `DataProvider.get_candles` + `data_unavailable` skip-summary counter on `SubmitResult`. **#2** `TZ=Asia/Jerusalem` committed to all three compose services + `tzdata`/`ENV TZ` in the `Dockerfile`. **#3** `load_config` falls back to `$VIBE_TRADE_CONFIG`; `ENV VIBE_TRADE_CONFIG=/config/config.toml` baked into the image so `docker compose run … config-check` finds the mounted config. **#4** `DataProvider.get_candles_batch` (bounded-concurrency `asyncio.gather`, 10 workers); submit's entries phase prefetches the whole universe in one batch — ~5 min → ~30 s. +15 net tests. |
+| **J** — Manual override CLI | (uncommitted) | Two operator commands off the cron cycle. `close-position SYMBOL` market-SELLs the full IB position (`order_ref="manual"`, confirmation prompt + `--yes`); `cancel-pending [SYMBOL]` lists working orders or cancels all of one ticker's. **No DB writes** — next record/reconcile persists fills (submit invariant). New `jobs/override.py` (`run_close_position`/`run_cancel_pending`, `OVERRIDE_CLIENT_ID=4`), new `OpenOrder` broker model, broker gains `get_open_orders`/`cancel_orders_for_symbol`. `replay-fills` dropped — IB can't serve past-day fills and reconcile Bug #5 orphan back-fill already covers missed runs. +15 tests. |
 | **H** — Live paper week + Tier-1 fixes + Enhancement #1 | `2de11e1` | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement, fixed Saturday 2026-05-16: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. **Validated live Mon–Wed 2026-05-18..20:** Bug #1 confirmed (`Failed=0`), Bug #5 confirmed (`opened` == `placed`, zero drift), Bug #6 proven on the 5/20 Gateway outage (two `[CRITICAL]` alerts delivered where 5/13 was silent), force-trim deployed (never triggered — book never exceeded the 50 cap). 22 new tests. Full findings + validation log in `docs/SESSION_H_FINDINGS.md`. Tier-3 hygiene deferred. |
 
 ### Not started (per ROADMAP)
 
-- **Session J** — Manual override CLI (`close-position`, `cancel-pending`, `replay-fills`)
 - **Session K** — Performance dashboard (`vibe-trade report`)
 - **Session L** — Multi-strategy (Donchian + RSI + MA crossover via `Order.orderRef`)
 - **Session M** — Portfolio allocation rules (per-strategy caps)
@@ -249,19 +250,23 @@ cd deploy && ./smoke-test.sh                         # run all three sequentiall
 
 ### Immediate next concrete deliverable
 
-**Session H is fully CLOSED** (2026-05-21). Tier-1/2 fixes validated live;
-Tier-3 hygiene done and merged to `main` (`34068da`).
+**Session J is implemented** (2026-05-22) — `close-position` + `cancel-pending`
+CLI commands, +15 tests. **Not yet committed** and **not yet exercised against
+live IB paper.** Before closing Session J: run both commands against TWS on
+7497 (paper) to confirm `ib.openTrades()` shape and `cancelOrder` behavior —
+the override broker methods have unit tests against a fake IB but no live
+verification. A `scratch_override.py` would be the natural home for that.
 
-**Session J — Manual override CLI:** `close-position SYMBOL`,
-`cancel-pending [perm-id]`, `replay-fills DATE`. Thin typer wrappers + tests.
+**Session K — Performance dashboard:** `vibe-trade report --days N` — sharpe,
+drawdown, win rate from `daily_pnl` + `trades`. Pure read-only against the DB,
+no IB connection.
 
-**Before Session J — one loose end worth a few minutes:**
-- **Fix the test environment.** The venv is missing `pytest-asyncio` (added back
-  manually during Session H-hygiene so tests could run) and `matplotlib`. The
-  uncommitted `pyproject.toml`/`uv.lock` changes bumped `pytest` into the *main*
-  deps — reconcile that and run `uv pip install -e ".[dev]"` so the venv has the
-  full dev set. Also fix `test_risk_manager.py::_pos_with_pnl` — it divides by
-  `qty`, crashing the `qty=0` case (1 failing test, pre-existing).
+**Loose end still open (pre-existing, predates Session J):**
+- **Fix the test environment.** The venv is missing `matplotlib` (3× failing
+  `test_backtest_plot`). The uncommitted `pyproject.toml`/`uv.lock` changes
+  bumped `pytest` into the *main* deps — reconcile that and run
+  `uv pip install -e ".[dev]"`. Also fix `test_risk_manager.py::_pos_with_pnl`
+  — divides by `qty`, crashing the `qty=0` case (1 failing test).
 
 ### Known operational notes (carry forward)
 

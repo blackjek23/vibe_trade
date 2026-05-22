@@ -147,6 +147,106 @@ async def _instant_sleep(_seconds: float) -> None:
     return None
 
 
+class _FakeContract:
+    def __init__(self, symbol: str):
+        self.symbol = symbol
+
+
+class _FakeOrder:
+    def __init__(self, action: str, qty: int, perm_id: int):
+        self.action = action
+        self.totalQuantity = qty
+        self.permId = perm_id
+
+
+class _FakeOrderStatus:
+    def __init__(self, status: str):
+        self.status = status
+
+
+class _FakeTrade:
+    def __init__(self, symbol: str, action: str, qty: int, perm_id: int, status: str):
+        self.contract = _FakeContract(symbol)
+        self.order = _FakeOrder(action, qty, perm_id)
+        self.orderStatus = _FakeOrderStatus(status)
+
+
+class _FakeIBWithOrders:
+    """IB stand-in exposing openTrades() / cancelOrder() for override tests."""
+
+    def __init__(self, trades: list[_FakeTrade]):
+        self._trades = trades
+        self.cancelled: list[_FakeOrder] = []
+
+    def openTrades(self) -> list[_FakeTrade]:
+        return list(self._trades)
+
+    def cancelOrder(self, order) -> None:
+        self.cancelled.append(order)
+
+
+class TestGetOpenOrders:
+    async def test_maps_open_trades_to_open_orders(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        broker.ib = _FakeIBWithOrders([
+            _FakeTrade("AAPL", "BUY", 10, 111, "PreSubmitted"),
+            _FakeTrade("MSFT", "SELL", 5, 222, "Submitted"),
+        ])
+
+        orders = await broker.get_open_orders()
+
+        assert [o.symbol for o in orders] == ["AAPL", "MSFT"]
+        assert orders[0].side == "BUY"
+        assert orders[0].quantity == 10
+        assert orders[0].perm_id == 111
+        assert orders[0].status == "PreSubmitted"
+
+    async def test_no_open_trades_returns_empty(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        broker.ib = _FakeIBWithOrders([])
+
+        assert await broker.get_open_orders() == []
+
+
+class TestCancelOrdersForSymbol:
+    async def test_cancels_only_matching_symbol(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIBWithOrders([
+            _FakeTrade("AAPL", "BUY", 10, 111, "PreSubmitted"),
+            _FakeTrade("MSFT", "BUY", 5, 222, "PreSubmitted"),
+        ])
+        broker.ib = fake
+
+        cancelled = await broker.cancel_orders_for_symbol("AAPL")
+
+        assert [o.symbol for o in cancelled] == ["AAPL"]
+        assert len(fake.cancelled) == 1
+        assert fake.cancelled[0].permId == 111
+
+    async def test_cancels_all_matches_for_symbol(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIBWithOrders([
+            _FakeTrade("AAPL", "BUY", 10, 111, "PreSubmitted"),
+            _FakeTrade("AAPL", "SELL", 3, 112, "Submitted"),
+        ])
+        broker.ib = fake
+
+        cancelled = await broker.cancel_orders_for_symbol("AAPL")
+
+        assert len(cancelled) == 2
+        assert len(fake.cancelled) == 2
+
+    async def test_no_match_cancels_nothing(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIBWithOrders([_FakeTrade("MSFT", "BUY", 5, 222, "PreSubmitted")])
+        broker.ib = fake
+
+        cancelled = await broker.cancel_orders_for_symbol("AAPL")
+
+        assert cancelled == []
+        assert fake.cancelled == []
+
+
 class TestOrderPacing:
     async def test_pacing_sleep_called_after_qualify(self, monkeypatch):
         sleep_durations: list[float] = []

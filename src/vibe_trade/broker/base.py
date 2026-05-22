@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from vibe_trade.broker.models import AccountSummary, OrderRequest, OrderResult, Position
+from vibe_trade.broker.models import (
+    AccountSummary,
+    OpenOrder,
+    OrderRequest,
+    OrderResult,
+    Position,
+)
 
 
 class BaseBroker(ABC):
@@ -31,3 +37,11 @@ class BaseBroker(ABC):
     @abstractmethod
     async def cancel_all_orders(self) -> int:
         """Cancel all open orders. Returns number cancelled."""
+
+    @abstractmethod
+    async def get_open_orders(self) -> list[OpenOrder]:
+        """Return all working (unfilled) orders currently live at the broker."""
+
+    @abstractmethod
+    async def cancel_orders_for_symbol(self, symbol: str) -> list[OpenOrder]:
+        """Cancel every working order for `symbol`. Returns what was cancelled."""

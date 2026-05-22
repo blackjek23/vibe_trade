@@ -9,7 +9,13 @@ from datetime import datetime
 from ib_async import IB, Contract, MarketOrder, Stock
 
 from vibe_trade.broker.base import BaseBroker
-from vibe_trade.broker.models import AccountSummary, OrderRequest, OrderResult, Position
+from vibe_trade.broker.models import (
+    AccountSummary,
+    OpenOrder,
+    OrderRequest,
+    OrderResult,
+    Position,
+)
 from vibe_trade.config import BrokerConfig
 
 logger = logging.getLogger(__name__)
@@ -160,3 +166,30 @@ class IBBroker(BaseBroker):
             self.ib.reqGlobalCancel()
             logger.info(f"Cancelled {count} open orders")
         return count
+
+    @staticmethod
+    def _to_open_order(trade) -> OpenOrder:
+        """Map an ib_async Trade to our OpenOrder model."""
+        return OpenOrder(
+            symbol=trade.contract.symbol,
+            side=trade.order.action,
+            quantity=int(trade.order.totalQuantity),
+            perm_id=trade.order.permId,
+            status=trade.orderStatus.status if trade.orderStatus else "",
+        )
+
+    async def get_open_orders(self) -> list[OpenOrder]:
+        # openTrades() carries contract + order + orderStatus together;
+        # openOrders() alone loses the contract symbol.
+        return [self._to_open_order(t) for t in self.ib.openTrades()]
+
+    async def cancel_orders_for_symbol(self, symbol: str) -> list[OpenOrder]:
+        cancelled: list[OpenOrder] = []
+        for trade in self.ib.openTrades():
+            if trade.contract.symbol != symbol:
+                continue
+            self.ib.cancelOrder(trade.order)
+            cancelled.append(self._to_open_order(trade))
+        if cancelled:
+            logger.info(f"Cancelled {len(cancelled)} order(s) for {symbol}")
+        return cancelled

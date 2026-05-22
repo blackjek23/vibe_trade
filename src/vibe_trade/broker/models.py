@@ -38,6 +38,22 @@ class OrderRequest:
 
 
 @dataclass
+class OpenOrder:
+    """A working (unfilled) order currently live at the broker.
+
+    Surfaced by the Session J manual override commands -- `cancel-pending`
+    lists these and cancels by symbol. `perm_id` is IB's cross-process-stable
+    order identifier (see PROJECT_MASTER_STATE §6).
+    """
+
+    symbol: str
+    side: str  # "BUY" or "SELL"
+    quantity: int
+    perm_id: int
+    status: str  # IB orderStatus, e.g. "PreSubmitted", "Submitted"
+
+
+@dataclass
 class OrderResult:
     order_id: int
     symbol: str

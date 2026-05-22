@@ -53,12 +53,12 @@ src/vibe_trade/
 ├── config.py      # pydantic config models + load_config
 ├── data/          # yfinance provider, SP500 universe, sp100_top static list
 ├── db/            # SQLAlchemy models, repositories, engine
-├── jobs/          # V2 jobs: submit.py, record.py, reconcile.py
+├── jobs/          # V2 jobs: submit.py, record.py, reconcile.py, override.py
 ├── backtest/      # data.py, engine.py, metrics.py (Session I)
 ├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic)
 ├── risk/          # manager.py, position_sizer.py, panic.py
 ├── strategy/      # base.py, examples/donchian.py
-└── cli.py         # typer: submit, record, reconcile, backtest, refresh-sp100, status, trades, config-check, panic
+└── cli.py         # typer: submit, record, reconcile, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, panic
 
 tests/
 ├── TEST_REGISTRY.csv    # central list of all tests (update after every change)

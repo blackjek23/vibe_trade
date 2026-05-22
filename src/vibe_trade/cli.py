@@ -894,6 +894,139 @@ def config_check(
         raise typer.Exit(1)
 
 
+@app.command(name="close-position")
+def close_position(
+    symbol: str = typer.Argument(..., help="Ticker to close (e.g. AAPL)"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+) -> None:
+    """Manually market-close the full position for one ticker (off-cycle).
+
+    No DB write -- the next record/reconcile run persists the resulting fill
+    via ib.fills(), exactly as it does for a submit-phase exit.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    asyncio.run(_run_close_position_cli(config, symbol.upper(), confirm))
+
+
+async def _run_close_position_cli(config, symbol: str, skip_confirm: bool) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.jobs.override import OVERRIDE_CLIENT_ID, run_close_position
+
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = OVERRIDE_CLIENT_ID
+    broker = IBBroker(broker_config, mode=config.general.mode)
+    notifier = _get_notifier(config)
+
+    console.print(
+        f"[bold]Close position[/bold] {symbol} mode={config.general.mode} "
+        f"client_id={OVERRIDE_CLIENT_ID}"
+    )
+
+    def _confirm(sym: str, qty: int) -> bool:
+        if skip_confirm:
+            return True
+        return typer.confirm(f"Close your full {sym} position ({qty} shares)?")
+
+    await broker.connect()
+    try:
+        result = await run_close_position(
+            broker=broker, symbol=symbol, confirm=_confirm
+        )
+    finally:
+        await broker.disconnect()
+
+    if not result.found:
+        console.print(f"[yellow]{symbol} is not held -- nothing to close.[/yellow]")
+        raise typer.Exit(1)
+    if result.aborted:
+        console.print("[dim]Aborted -- no order placed.[/dim]")
+        return
+
+    console.print(
+        f"[green]Placed SELL {result.quantity}x {symbol}[/green] "
+        f"-- status={result.status}"
+    )
+    console.print(
+        "[dim]No DB write; the next record/reconcile run persists the fill.[/dim]"
+    )
+    await notifier.notify_summary(
+        f"[CLOSE-POSITION] {symbol}: SELL {result.quantity} ({result.status})"
+    )
+
+
+@app.command(name="cancel-pending")
+def cancel_pending(
+    symbol: Optional[str] = typer.Argument(
+        None, help="Ticker whose working orders to cancel; omit to just list"
+    ),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """List working orders, or cancel every working order for one ticker.
+
+    With no argument: prints the working-order table and exits, cancelling
+    nothing. With a ticker: cancels all of that ticker's working orders.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    asyncio.run(
+        _run_cancel_pending_cli(config, symbol.upper() if symbol else None)
+    )
+
+
+async def _run_cancel_pending_cli(config, symbol: str | None) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.jobs.override import OVERRIDE_CLIENT_ID, run_cancel_pending
+
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = OVERRIDE_CLIENT_ID
+    broker = IBBroker(broker_config, mode=config.general.mode)
+    notifier = _get_notifier(config)
+
+    console.print(
+        f"[bold]Cancel pending[/bold] mode={config.general.mode} "
+        f"client_id={OVERRIDE_CLIENT_ID}"
+    )
+
+    await broker.connect()
+    try:
+        result = await run_cancel_pending(broker=broker, symbol=symbol)
+    finally:
+        await broker.disconnect()
+
+    if result.listing:
+        table = Table(title="Working Orders")
+        table.add_column("Symbol", style="cyan")
+        table.add_column("Side")
+        table.add_column("Qty", justify="right")
+        table.add_column("permId", justify="right")
+        table.add_column("Status")
+        for o in result.listing:
+            table.add_row(
+                o.symbol, o.side, str(o.quantity), str(o.perm_id), o.status
+            )
+        console.print(table)
+    else:
+        console.print("[dim]No working orders.[/dim]")
+
+    if symbol is None:
+        return
+
+    if not result.matched:
+        console.print(
+            f"[yellow]No working order for {symbol} -- nothing cancelled.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    console.print(
+        f"[green]Cancelled {len(result.cancelled)} order(s) for {symbol}[/green]"
+    )
+    await notifier.notify_summary(
+        f"[CANCEL-PENDING] {symbol}: cancelled {len(result.cancelled)} order(s)"
+    )
+
+
 @app.command()
 def panic(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
