@@ -68,3 +68,28 @@ def load_daily_pnl(session: Session, days: int, today: date) -> list[DailyRow]:
         )
         for r in rows
     ]
+
+
+def load_latest_holdings(session: Session) -> tuple[date | None, list[HoldingRow]]:
+    """Return (snapshot_date, rows) from the MAX(date) row of
+    portfolio_snapshot. (None, []) when the table is empty."""
+    latest = session.query(func.max(PortfolioSnapshot.date)).scalar()
+    if latest is None:
+        return (None, [])
+    rows = (
+        session.query(PortfolioSnapshot)
+        .filter(PortfolioSnapshot.date == latest)
+        .all()
+    )
+    holdings = [
+        HoldingRow(
+            symbol=r.symbol,
+            quantity=r.quantity,
+            avg_cost=r.avg_cost,
+            market_price=r.market_price,
+            market_value=r.market_value,
+            unrealized_pnl=r.unrealized_pnl,
+        )
+        for r in rows
+    ]
+    return (latest, holdings)

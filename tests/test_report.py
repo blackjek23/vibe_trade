@@ -239,3 +239,41 @@ def test_load_daily_pnl_respects_days_window(session):
     assert rows[0].date < rows[-1].date
     # all account_value is float
     assert all(isinstance(r.account_value, float) for r in rows)
+
+
+# ============================================================ load_latest_holdings
+
+
+def test_load_latest_holdings_returns_only_max_date_rows(session):
+    from vibe_trade.db.models import PortfolioSnapshot
+    from vibe_trade.reports.data import load_latest_holdings
+
+    # Day 1: 2 holdings; Day 2: 3 holdings (the latest)
+    older = date(2026, 5, 20)
+    latest = date(2026, 5, 25)
+    for sym in ("AAPL", "MSFT"):
+        session.add(PortfolioSnapshot(
+            date=older, symbol=sym, quantity=10,
+            avg_cost=100.0, market_price=101.0,
+            market_value=1010.0, unrealized_pnl=10.0,
+        ))
+    for sym in ("AAPL", "MSFT", "GOOG"):
+        session.add(PortfolioSnapshot(
+            date=latest, symbol=sym, quantity=20,
+            avg_cost=100.0, market_price=105.0,
+            market_value=2100.0, unrealized_pnl=100.0,
+        ))
+    session.commit()
+
+    snapshot_date, holdings = load_latest_holdings(session)
+    assert snapshot_date == latest
+    assert len(holdings) == 3
+    assert all(h.quantity == 20 for h in holdings)
+
+
+def test_load_latest_holdings_empty_db_returns_none_and_empty_list(session):
+    from vibe_trade.reports.data import load_latest_holdings
+
+    snapshot_date, holdings = load_latest_holdings(session)
+    assert snapshot_date is None
+    assert holdings == []
