@@ -360,3 +360,74 @@ def test_data_loaders_on_empty_db_return_empty_containers(session):
     assert load_trade_activity(session, days=30, today=today) == {}
     assert load_closed_trades(session, days=30, today=today) == []
     assert detect_outlier_days([]) == set()
+
+
+# ============================================================ render_report
+
+
+def _holding(symbol: str, pnl: float) -> HoldingRow:
+    return HoldingRow(
+        symbol=symbol, quantity=10,
+        avg_cost=100.0, market_price=100.0 + pnl / 10,
+        market_value=1000.0 + pnl, unrealized_pnl=pnl,
+    )
+
+
+def test_render_report_full_data_emits_key_sections(capsys):
+    from rich.console import Console
+
+    from vibe_trade.reports.render import render_report
+
+    today = date(2026, 5, 26)
+    daily_rows = [
+        _row(date(2026, 5, 1), 100_000.0),
+        _row(date(2026, 5, 5), 102_000.0),
+    ]
+    holdings = [_holding("AAPL", +300.0), _holding("MSFT", -200.0)]
+    metrics = compute_metrics(daily_rows)
+    closed_stats = compute_closed_trade_stats([])
+    console = Console(force_terminal=False, no_color=True, width=120)
+
+    render_report(
+        metrics=metrics,
+        daily_rows=daily_rows,
+        holdings=holdings,
+        holdings_as_of=date(2026, 5, 5),
+        activity={date(2026, 5, 1): 2, date(2026, 5, 5): 1},
+        closed_stats=closed_stats,
+        outliers=set(),
+        window_days=30,
+        today=today,
+        console=console,
+    )
+    out = capsys.readouterr().out
+    assert "Account value" in out
+    assert "Sharpe" in out
+    assert "AAPL" in out
+    assert "no closed trades" in out  # since closed_stats.n == 0
+
+
+def test_render_report_empty_prints_no_daily_pnl_sentinel(capsys):
+    from rich.console import Console
+
+    from vibe_trade.reports.render import render_report
+
+    today = date(2026, 5, 26)
+    metrics = compute_metrics([])
+    closed_stats = compute_closed_trade_stats([])
+    console = Console(force_terminal=False, no_color=True, width=120)
+
+    render_report(
+        metrics=metrics,
+        daily_rows=[],
+        holdings=[],
+        holdings_as_of=None,
+        activity={},
+        closed_stats=closed_stats,
+        outliers=set(),
+        window_days=30,
+        today=today,
+        console=console,
+    )
+    out = capsys.readouterr().out
+    assert "No daily P&L data" in out
