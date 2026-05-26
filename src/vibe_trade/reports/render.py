@@ -169,12 +169,16 @@ def _section_activity(
     outliers: set[date], closed_stats: ClosedTradeStats,
 ) -> None:
     console.print("\n[bold]Trade activity[/bold]")
-    if activity:
+    # Merge activity dates with outlier dates so an outage day with zero
+    # entries still surfaces in the day-by-day breakdown.
+    all_dates = sorted(set(activity.keys()) | outliers)
+    if all_dates:
         console.print("Trades opened by day:")
         parts = []
-        for d in sorted(activity.keys()):
+        for d in all_dates:
             mark = " [yellow]!warn[/yellow]" if d in outliers else ""
-            parts.append(f"{d.strftime('%m-%d')}: {activity[d]}{mark}")
+            count = activity.get(d, 0)
+            parts.append(f"{d.strftime('%m-%d')}: {count}{mark}")
         # Print 4 entries per line for readability.
         for i in range(0, len(parts), 4):
             console.print("  " + "    ".join(parts[i:i + 4]))
@@ -189,7 +193,8 @@ def _section_activity(
         console.print(
             "[dim]!warn days where snapshot shows 0 open positions while "
             "realized P&L is non-zero -- typically a Gateway outage or "
-            "reconcile-time anomaly. Included in metrics.[/dim]"
+            "reconcile-time anomaly. Included in metrics (note this "
+            "inflates Best day / CAGR).[/dim]"
         )
 
 

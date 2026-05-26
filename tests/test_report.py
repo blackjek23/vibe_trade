@@ -407,6 +407,44 @@ def test_render_report_full_data_emits_key_sections(capsys):
     assert "no closed trades" in out  # since closed_stats.n == 0
 
 
+def test_render_report_surfaces_outlier_dates_with_no_activity(capsys):
+    """Outlier dates (e.g. Gateway outage day) must appear in activity
+    even when no trade entries occurred on them -- otherwise the !warn
+    footnote refers to nothing visible."""
+    from rich.console import Console
+
+    from vibe_trade.reports.render import render_report
+
+    today = date(2026, 5, 26)
+    daily_rows = [
+        _row(date(2026, 5, 12), 100_000.0, real=0.0, unr=10.0, pos=50),
+        _row(date(2026, 5, 13), 100_000.0, real=4056.0, unr=0.0, pos=0),  # outlier
+        _row(date(2026, 5, 14), 100_000.0, real=0.0, unr=20.0, pos=50),
+    ]
+    metrics = compute_metrics(daily_rows)
+    closed_stats = compute_closed_trade_stats([])
+    console = Console(force_terminal=False, no_color=True, width=120)
+
+    # Activity has entries on 5/12 and 5/14 but NOT on 5/13 (the outlier).
+    render_report(
+        metrics=metrics,
+        daily_rows=daily_rows,
+        holdings=[],
+        holdings_as_of=date(2026, 5, 14),
+        activity={date(2026, 5, 12): 5, date(2026, 5, 14): 3},
+        closed_stats=closed_stats,
+        outliers={date(2026, 5, 13)},
+        window_days=30,
+        today=today,
+        console=console,
+    )
+    out = capsys.readouterr().out
+    # The outlier date must appear in the activity breakdown WITH the !warn
+    # marker, even though it has no trade entries.
+    assert "05-13: 0" in out
+    assert "!warn" in out
+
+
 def test_render_report_empty_prints_no_daily_pnl_sentinel(capsys):
     from rich.console import Console
 
