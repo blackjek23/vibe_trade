@@ -197,3 +197,45 @@ def test_compute_closed_trade_stats_all_wins_profit_factor_inf():
     assert s.n == 2
     assert s.win_rate == 1.0
     assert s.profit_factor == float("inf")
+
+
+# ============================================================ load_daily_pnl
+
+
+@pytest.fixture
+def session():
+    """Fresh in-memory SQLite session for each data-layer test."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from vibe_trade.db.models import Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    yield s
+    s.close()
+
+
+def test_load_daily_pnl_respects_days_window(session):
+    from vibe_trade.db.models import DailyPnL
+    from vibe_trade.reports.data import load_daily_pnl
+
+    today = date(2026, 5, 26)
+    # Insert 10 rows, one every 6 calendar days, spanning ~54 days back
+    for i in range(10):
+        session.add(DailyPnL(
+            date=today - timedelta(days=i * 6),
+            realized_pnl=0.0, unrealized_pnl=0.0,
+            account_value=100_000.0 + i * 100,
+            open_positions_count=50,
+        ))
+    session.commit()
+
+    rows = load_daily_pnl(session, days=30, today=today)
+    # rows with date >= today-30 -> i*6 <= 30 -> i in {0,1,2,3,4,5} -> 6 rows
+    assert len(rows) == 6
+    # sorted by date ascending
+    assert rows[0].date < rows[-1].date
+    # all account_value is float
+    assert all(isinstance(r.account_value, float) for r in rows)
