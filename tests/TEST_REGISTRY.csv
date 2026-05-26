@@ -289,3 +289,25 @@ test_broker.py,TestCancelOrdersForSymbol,test_cancels_all_matches_for_symbol,can
 test_broker.py,TestCancelOrdersForSymbol,test_no_match_cancels_nothing,cancel_orders_for_symbol cancels nothing when the symbol has no orders
 test_broker.py,TestGetOpenOrders,test_refreshes_all_clients_before_listing,get_open_orders calls reqAllOpenOrders so cross-client orders are visible
 test_broker.py,TestCancelOrdersForSymbol,test_refreshes_all_clients_before_cancelling,cancel_orders_for_symbol calls reqAllOpenOrders before cancelling
+test_report.py,compute_metrics,test_compute_metrics_empty_returns_zeroed_dataclass,Empty daily_rows list returns zeroed dataclass without NaN
+test_report.py,compute_metrics,test_compute_metrics_single_row_has_zero_return_no_nan,Single-row input: total_return=0 sharpe=0 cagr=None no NaN
+test_report.py,compute_metrics,test_compute_metrics_flat_account_value_gives_zero_sharpe,Flat account_value series: sharpe=0 via std-guard
+test_report.py,compute_metrics,test_compute_metrics_drops_rows_with_null_account_value,Rows with null account_value are excluded from equity math
+test_report.py,compute_metrics,test_compute_metrics_monotonically_increasing_positive_sharpe_no_dd,Monotonically rising equity: positive sharpe drawdown=0 no peak/trough dates
+test_report.py,compute_metrics,test_compute_metrics_monotonically_decreasing_negative_return_and_dd,Monotonically falling equity: negative return and drawdown peak=first trough=last
+test_report.py,compute_metrics,test_compute_metrics_drawdown_identifies_correct_peak_and_trough,Drawdown peak/trough correctly identified across local highs and lows
+test_report.py,compute_metrics,test_compute_metrics_best_worst_day_pnl_from_realized_plus_unrealized,Best/worst day P&L = max/min of realized+unrealized per row
+test_report.py,compute_metrics,test_compute_metrics_known_fixture_sharpe_and_drawdown,5-row hand-computed fixture: sharpe~13.27 drawdown~-0.98%
+test_report.py,compute_closed_trade_stats,test_compute_closed_trade_stats_empty_returns_zeros_no_nan,Empty closed-trades list returns zeros without NaN
+test_report.py,compute_closed_trade_stats,test_compute_closed_trade_stats_mixed_wins_and_losses,Hand-computed win_rate avg_win avg_loss profit_factor avg_holding_days on 4 trades
+test_report.py,compute_closed_trade_stats,test_compute_closed_trade_stats_all_wins_profit_factor_inf,All-wins case yields profit_factor=inf
+test_report.py,load_daily_pnl,test_load_daily_pnl_respects_days_window,10 rows across 60 days request 30 returns 6 sorted ascending
+test_report.py,load_latest_holdings,test_load_latest_holdings_returns_only_max_date_rows,Returns only MAX(date) snapshot rows never older dates
+test_report.py,load_latest_holdings,test_load_latest_holdings_empty_db_returns_none_and_empty_list,Empty portfolio_snapshot returns (None [])
+test_report.py,load_trade_activity,test_load_trade_activity_groups_by_entry_date_within_window,Trades grouped by entry_time::date respecting --days window
+test_report.py,load_closed_trades,test_load_closed_trades_filters_status_and_exit_time_window,Returns only status=CLOSED rows with exit_time in window
+test_report.py,detect_outlier_days,test_detect_outlier_days_flags_positions_zero_with_realized_nonzero,Flags positions=0 AND realized!=0 only ignores positions=0+realized=0
+test_report.py,data,test_data_loaders_on_empty_db_return_empty_containers,All 5 loaders + outlier detector return empty containers on empty DB
+test_report.py,render_report,test_render_report_full_data_emits_key_sections,Full data renders Account value Sharpe holding symbol no-closed-trades line
+test_report.py,render_report,test_render_report_empty_prints_no_daily_pnl_sentinel,Empty metrics prints "No daily P&L data" sentinel and returns early
+test_report.py,cli,test_cli_report_exits_zero_and_emits_header,End-to-end CliRunner: seeds tmp DB invokes report exits 0 emits header
