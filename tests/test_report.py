@@ -147,3 +147,53 @@ def test_compute_metrics_known_fixture_sharpe_and_drawdown():
     assert m.max_drawdown_pct == pytest.approx(-0.9803921, abs=1e-4)
     # CAGR over 4 days, factor 1.05 -- huge annualized number
     assert m.cagr_pct is not None and m.cagr_pct > 100.0
+
+
+# ============================================================ compute_closed_trade_stats
+
+
+def _ct(symbol: str, entry: date, exit_: date, pnl: float) -> ClosedTrade:
+    return ClosedTrade(
+        symbol=symbol,
+        entry_time=datetime.combine(entry, datetime.min.time()),
+        exit_time=datetime.combine(exit_, datetime.min.time()),
+        pnl=pnl,
+        pnl_pct=None,
+    )
+
+
+def test_compute_closed_trade_stats_empty_returns_zeros_no_nan():
+    s = compute_closed_trade_stats([])
+    assert s.n == 0
+    assert s.win_rate == 0.0
+    assert s.avg_win == 0.0
+    assert s.avg_loss == 0.0
+    assert s.profit_factor == 0.0
+    assert s.avg_holding_days == 0.0
+
+
+def test_compute_closed_trade_stats_mixed_wins_and_losses():
+    trades = [
+        _ct("AAPL", date(2026, 5, 1), date(2026, 5, 11), pnl=+200.0),   # 10d
+        _ct("MSFT", date(2026, 5, 2), date(2026, 5, 22), pnl=+400.0),   # 20d
+        _ct("GOOG", date(2026, 5, 3), date(2026, 5, 18), pnl=-100.0),   # 15d
+        _ct("AMZN", date(2026, 5, 4), date(2026, 5, 19), pnl=-300.0),   # 15d
+    ]
+    s = compute_closed_trade_stats(trades)
+    assert s.n == 4
+    assert s.win_rate == 0.5
+    assert s.avg_win == 300.0           # (200+400)/2
+    assert s.avg_loss == -200.0         # (-100 + -300)/2
+    assert s.profit_factor == pytest.approx(600.0 / 400.0)
+    assert s.avg_holding_days == pytest.approx((10 + 20 + 15 + 15) / 4)
+
+
+def test_compute_closed_trade_stats_all_wins_profit_factor_inf():
+    trades = [
+        _ct("AAPL", date(2026, 5, 1), date(2026, 5, 5), pnl=+100.0),
+        _ct("MSFT", date(2026, 5, 2), date(2026, 5, 6), pnl=+200.0),
+    ]
+    s = compute_closed_trade_stats(trades)
+    assert s.n == 2
+    assert s.win_rate == 1.0
+    assert s.profit_factor == float("inf")

@@ -134,4 +134,36 @@ def compute_metrics(daily_rows: list[DailyRow]) -> ReportMetrics:
 
 
 def compute_closed_trade_stats(closed: list[ClosedTrade]) -> ClosedTradeStats:
-    raise NotImplementedError
+    n = len(closed)
+    if n == 0:
+        return ClosedTradeStats(
+            n=0, win_rate=0.0, avg_win=0.0, avg_loss=0.0,
+            profit_factor=0.0, avg_holding_days=0.0,
+        )
+
+    wins = [t.pnl for t in closed if t.pnl > 0]
+    losses = [t.pnl for t in closed if t.pnl < 0]
+
+    win_rate = len(wins) / n
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = sum(losses) / len(losses) if losses else 0.0
+
+    gross_wins = sum(wins)
+    gross_losses = abs(sum(losses))
+    if gross_losses > 0:
+        profit_factor = gross_wins / gross_losses
+    else:
+        profit_factor = float("inf") if gross_wins > 0 else 0.0
+
+    avg_holding_days = sum(
+        (t.exit_time - t.entry_time).days for t in closed
+    ) / n
+
+    return ClosedTradeStats(
+        n=n,
+        win_rate=win_rate,
+        avg_win=avg_win,
+        avg_loss=avg_loss,
+        profit_factor=profit_factor,
+        avg_holding_days=avg_holding_days,
+    )
