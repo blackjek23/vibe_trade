@@ -141,3 +141,17 @@ def load_closed_trades(
         )
         for t in rows
     ]
+
+
+def detect_outlier_days(daily_rows: list[DailyRow]) -> set[date]:
+    """Days that look like a Gateway/reconcile artifact:
+    open_positions_count == 0 AND realized_pnl != 0.
+
+    Returned dates are included in metrics; callers mark them in the
+    output so the operator sees the anomaly.
+    """
+    return {
+        r.date
+        for r in daily_rows
+        if r.open_positions_count == 0 and r.realized_pnl != 0
+    }

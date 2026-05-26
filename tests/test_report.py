@@ -330,3 +330,33 @@ def test_load_closed_trades_filters_status_and_exit_time_window(session):
     assert len(closed) == 1
     assert closed[0].symbol == "AAPL"
     assert closed[0].pnl == 200.0
+
+
+# ============================================================ detect_outlier_days
+
+
+def test_detect_outlier_days_flags_positions_zero_with_realized_nonzero():
+    rows = [
+        _row(date(2026, 5, 12), 100_000.0, real=0.0, unr=10.0, pos=50),     # normal
+        _row(date(2026, 5, 13), 100_000.0, real=4056.0, unr=0.0, pos=0),    # OUTLIER
+        _row(date(2026, 5, 14), 100_000.0, real=0.0, unr=20.0, pos=0),      # positions=0 but realized=0 -> not outlier
+        _row(date(2026, 5, 15), 100_000.0, real=100.0, unr=0.0, pos=45),    # realized>0 but positions>0 -> not outlier
+    ]
+    from vibe_trade.reports.data import detect_outlier_days
+    outliers = detect_outlier_days(rows)
+    assert outliers == {date(2026, 5, 13)}
+
+
+def test_data_loaders_on_empty_db_return_empty_containers(session):
+    from vibe_trade.reports.data import (
+        detect_outlier_days, load_closed_trades, load_daily_pnl,
+        load_latest_holdings, load_trade_activity,
+    )
+
+    today = date(2026, 5, 26)
+    assert load_daily_pnl(session, days=30, today=today) == []
+    snap_date, holdings = load_latest_holdings(session)
+    assert snap_date is None and holdings == []
+    assert load_trade_activity(session, days=30, today=today) == {}
+    assert load_closed_trades(session, days=30, today=today) == []
+    assert detect_outlier_days([]) == set()
