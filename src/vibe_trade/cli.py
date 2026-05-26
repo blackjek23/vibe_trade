@@ -876,6 +876,59 @@ def trades(
     session.close()
 
 
+@app.command()
+def report(
+    days: int = typer.Option(30, "--days", "-d",
+                             help="Calendar days back from today"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c",
+                                              help="Config file path"),
+) -> None:
+    """Read-only performance dashboard: equity, holdings, activity, trade stats."""
+    from datetime import date as date_cls
+
+    from vibe_trade.reports.data import (
+        detect_outlier_days,
+        load_closed_trades,
+        load_daily_pnl,
+        load_latest_holdings,
+        load_trade_activity,
+    )
+    from vibe_trade.reports.metrics import (
+        compute_closed_trade_stats,
+        compute_metrics,
+    )
+    from vibe_trade.reports.render import render_report
+
+    config = load_config(config_path)
+    session_factory = init_db(config.general.db_path)
+    session = session_factory()
+    try:
+        today = date_cls.today()
+        daily_rows = load_daily_pnl(session, days, today)
+        holdings_as_of, holdings = load_latest_holdings(session)
+        activity = load_trade_activity(session, days, today)
+        closed = load_closed_trades(session, days, today)
+        outliers = detect_outlier_days(daily_rows)
+
+        metrics = compute_metrics(daily_rows)
+        closed_stats = compute_closed_trade_stats(closed)
+
+        render_report(
+            metrics=metrics,
+            daily_rows=daily_rows,
+            holdings=holdings,
+            holdings_as_of=holdings_as_of,
+            activity=activity,
+            closed_stats=closed_stats,
+            outliers=outliers,
+            window_days=days,
+            today=today,
+            console=console,
+        )
+    finally:
+        session.close()
+
+
 @app.command(name="config-check")
 def config_check(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),

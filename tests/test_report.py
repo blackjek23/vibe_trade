@@ -431,3 +431,46 @@ def test_render_report_empty_prints_no_daily_pnl_sentinel(capsys):
     )
     out = capsys.readouterr().out
     assert "No daily P&L data" in out
+
+
+# ============================================================ CLI integration
+
+
+def test_cli_report_exits_zero_and_emits_header(tmp_path, monkeypatch):
+    """End-to-end: seed a tmp DB, run `vibe-trade report --days 7 --config X`."""
+    from typer.testing import CliRunner
+
+    from vibe_trade.cli import app
+    from vibe_trade.db.engine import init_db
+    from vibe_trade.db.models import DailyPnL
+
+    # 1. Build a minimal config file pointing at a tmp DB.
+    # AppConfig has default_factory for every sub-model, so only the
+    # general.db_path override is required.
+    db_path = tmp_path / "report.db"
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f'[general]\ndb_path = "{db_path.as_posix()}"\n'
+    )
+
+    # 2. Seed the tmp DB with a couple of daily_pnl rows.
+    factory = init_db(str(db_path))
+    s = factory()
+    today = date.today()
+    for i, av in enumerate([100_000.0, 101_000.0]):
+        s.add(DailyPnL(
+            date=today - timedelta(days=(1 - i)),
+            realized_pnl=0.0, unrealized_pnl=10.0,
+            account_value=av, open_positions_count=10,
+        ))
+    s.commit()
+    s.close()
+
+    # 3. Invoke the CLI.
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["report", "--days", "7", "--config", str(config_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "vibe_trade report" in result.output
+    assert "Account value" in result.output
