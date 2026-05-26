@@ -311,3 +311,4 @@ test_report.py,data,test_data_loaders_on_empty_db_return_empty_containers,All 5 
 test_report.py,render_report,test_render_report_full_data_emits_key_sections,Full data renders Account value Sharpe holding symbol no-closed-trades line
 test_report.py,render_report,test_render_report_empty_prints_no_daily_pnl_sentinel,Empty metrics prints "No daily P&L data" sentinel and returns early
 test_report.py,cli,test_cli_report_exits_zero_and_emits_header,End-to-end CliRunner: seeds tmp DB invokes report exits 0 emits header
+test_report.py,render_report,test_render_report_surfaces_outlier_dates_with_no_activity,Outlier dates appear in activity even with zero entries so !warn footnote is not orphaned
