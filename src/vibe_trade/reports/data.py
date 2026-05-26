@@ -93,3 +93,51 @@ def load_latest_holdings(session: Session) -> tuple[date | None, list[HoldingRow
         for r in rows
     ]
     return (latest, holdings)
+
+
+def load_trade_activity(
+    session: Session, days: int, today: date,
+) -> dict[date, int]:
+    """Count of `trades` rows grouped by entry_time::date, within window.
+
+    Source of truth for activity -- the `daily_pnl.trades_opened` column
+    is unreliable (often reads 0 even on days with confirmed entries).
+    """
+    cutoff = today - timedelta(days=days)
+    cutoff_dt = datetime.combine(cutoff, datetime.min.time())
+    rows = (
+        session.query(Trade)
+        .filter(Trade.entry_time.is_not(None))
+        .filter(Trade.entry_time >= cutoff_dt)
+        .all()
+    )
+    counts: dict[date, int] = {}
+    for t in rows:
+        d = t.entry_time.date()
+        counts[d] = counts.get(d, 0) + 1
+    return counts
+
+
+def load_closed_trades(
+    session: Session, days: int, today: date,
+) -> list[ClosedTrade]:
+    """`trades` rows with status='CLOSED' AND exit_time within the window."""
+    cutoff = today - timedelta(days=days)
+    cutoff_dt = datetime.combine(cutoff, datetime.min.time())
+    rows = (
+        session.query(Trade)
+        .filter(Trade.status == "CLOSED")
+        .filter(Trade.exit_time.is_not(None))
+        .filter(Trade.exit_time >= cutoff_dt)
+        .all()
+    )
+    return [
+        ClosedTrade(
+            symbol=t.symbol,
+            entry_time=t.entry_time,
+            exit_time=t.exit_time,
+            pnl=t.pnl or 0.0,
+            pnl_pct=t.pnl_pct,
+        )
+        for t in rows
+    ]

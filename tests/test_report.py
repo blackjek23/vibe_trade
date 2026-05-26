@@ -277,3 +277,56 @@ def test_load_latest_holdings_empty_db_returns_none_and_empty_list(session):
     snapshot_date, holdings = load_latest_holdings(session)
     assert snapshot_date is None
     assert holdings == []
+
+
+# ============================================================ load_trade_activity / load_closed_trades
+
+
+def _trade(session, symbol: str, entry: datetime, status: str = "OPEN",
+           exit_: datetime | None = None, pnl: float | None = None):
+    from vibe_trade.db.models import Trade
+    session.add(Trade(
+        symbol=symbol, side="BUY", strategy_name="donchian",
+        entry_time=entry, exit_time=exit_,
+        entry_price=100.0, exit_price=(110.0 if exit_ else None),
+        requested_quantity=10, filled_quantity=10,
+        status=status, pnl=pnl,
+    ))
+
+
+def test_load_trade_activity_groups_by_entry_date_within_window(session):
+    from vibe_trade.reports.data import load_trade_activity
+
+    today = date(2026, 5, 26)
+    # 3 entries on 5/20, 2 entries on 5/25, 1 entry 60 days ago (outside window)
+    for i in range(3):
+        _trade(session, f"S{i}", datetime(2026, 5, 20, 14, i))
+    for i in range(2):
+        _trade(session, f"T{i}", datetime(2026, 5, 25, 14, i))
+    _trade(session, "OLD", datetime(2026, 3, 1, 14, 0))
+    session.commit()
+
+    activity = load_trade_activity(session, days=30, today=today)
+    assert activity == {date(2026, 5, 20): 3, date(2026, 5, 25): 2}
+
+
+def test_load_closed_trades_filters_status_and_exit_time_window(session):
+    from vibe_trade.reports.data import load_closed_trades
+
+    today = date(2026, 5, 26)
+    # CLOSED with exit_time inside window -> included
+    _trade(session, "AAPL", datetime(2026, 5, 1, 14, 0),
+           status="CLOSED",
+           exit_=datetime(2026, 5, 20, 14, 0), pnl=200.0)
+    # CLOSED but exit_time outside window -> excluded
+    _trade(session, "OLD", datetime(2026, 3, 1, 14, 0),
+           status="CLOSED",
+           exit_=datetime(2026, 3, 20, 14, 0), pnl=100.0)
+    # OPEN (no exit) -> excluded
+    _trade(session, "MSFT", datetime(2026, 5, 10, 14, 0), status="OPEN")
+    session.commit()
+
+    closed = load_closed_trades(session, days=30, today=today)
+    assert len(closed) == 1
+    assert closed[0].symbol == "AAPL"
+    assert closed[0].pnl == 200.0
