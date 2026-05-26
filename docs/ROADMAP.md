@@ -44,10 +44,13 @@ This document maps what comes next. Sessions are numbered F+ to continue the A�
 - `vibe-trade replay-fills DATE` — re-run record for a missed day
 - Smaller than it looks; thin typer wrappers + tests
 
-### Session K — Performance dashboard
-- `vibe-trade report --days N` — sharpe, drawdown, win rate from `daily_pnl` + `trades` tables
-- Optional: simple HTML output in `reports/` for browser viewing
-- Pure read-only against existing DB; no IB connection needed
+### Session K — Performance dashboard ✅ Done (2026-05-26)
+- `vibe-trade report --days N` ships. Read-only against `daily_pnl` +
+  `portfolio_snapshot` + `trades`. Five sections: header, equity & risk,
+  current holdings (top/bottom 5), trade activity (outlier-flagged),
+  trade stats (n/a until first SELL fires). HTML output deferred — the
+  user mentioned wanting a web UI separately, and `reports/metrics.py` +
+  `reports/data.py` are pure modules designed to back it.
 
 ---
 

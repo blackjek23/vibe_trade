@@ -4,12 +4,12 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-22 (Session J — manual override CLI — CLOSED)
-**HEAD commit:** `488c20b` Session J fix: cancel-pending cross-client visibility + cancel authority
-**Tests:** 290 collected (286 passing; +17 net this session). 4 failures are
-  pre-existing and unrelated to this work — 3× `test_backtest_plot` (matplotlib
-  not installed in the venv) and 1× `test_risk_manager` (buggy test helper
-  divides by `qty=0`). See §7.
+**Last updated:** 2026-05-26 (Session K — performance dashboard — CLOSED)
+**HEAD commit:** `37c4628` Session K: TEST_REGISTRY.csv +1 row for outlier-surfacing regression
+**Tests:** 313 collected (309 passing, 1 skipped, 0 failing; +23 net this session).
+  The 4 pre-existing failures from Session J (3× `test_backtest_plot`,
+  1× `test_risk_manager`) appear to have resolved (matplotlib now present /
+  `qty=0` no longer hit). Confirm in §7.
 **Branch:** `main` — synced with `origin/main`.
 
 ---
@@ -88,11 +88,11 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **G** — Docker deployment | `8559adc` | Single Docker image + three compose services (submit/record/reconcile). `network_mode: host` for IB Gateway. Host crontab triggers `docker compose run --rm`. Includes Dockerfile (uv), docker-compose.yml, crontab.example, smoke-test.sh, .env.example, deploy/README.md, .dockerignore. No Python code changes. |
 | **H-hygiene** — Tier-3 cleanup | `session-h-hygiene` branch | The four deferred Tier-3 items from the Saturday triage. **#1** curated `SP500_SYMBOLS` (16 delistings removed, `BRK.B`/`BF.B` → hyphen form) + `normalize_symbol` `.`→`-` helper + one-retry-with-backoff in `DataProvider.get_candles` + `data_unavailable` skip-summary counter on `SubmitResult`. **#2** `TZ=Asia/Jerusalem` committed to all three compose services + `tzdata`/`ENV TZ` in the `Dockerfile`. **#3** `load_config` falls back to `$VIBE_TRADE_CONFIG`; `ENV VIBE_TRADE_CONFIG=/config/config.toml` baked into the image so `docker compose run … config-check` finds the mounted config. **#4** `DataProvider.get_candles_batch` (bounded-concurrency `asyncio.gather`, 10 workers); submit's entries phase prefetches the whole universe in one batch — ~5 min → ~30 s. +15 net tests. |
 | **J** — Manual override CLI | `1594bf3` + `488c20b` | Two operator commands off the cron cycle. `close-position SYMBOL` market-SELLs the full IB position (`order_ref="manual"`, confirmation prompt + `--yes`, `OVERRIDE_CLIENT_ID=4`); `cancel-pending [SYMBOL]` lists working orders or cancels all of one ticker's. **No DB writes** — next record/reconcile persists fills (submit invariant). New `jobs/override.py` (`run_close_position`/`run_cancel_pending`), new `OpenOrder` broker model, broker gains `get_open_orders`/`cancel_orders_for_symbol`. `replay-fills` dropped — IB can't serve past-day fills and reconcile Bug #5 orphan back-fill already covers missed runs. **Live-paper verified:** caught a cross-client bug — `ib.openTrades()` and `cancelOrder` are client-scoped, so `cancel-pending` could not see/cancel a `submit` order. Fix: `get_open_orders`/`cancel_orders_for_symbol` call `reqAllOpenOrders` first (visibility), and `cancel-pending` connects as **submit's client_id (1)**, not 4, so `cancelOrder` is honoured (proven live). +17 tests. `close-position` not yet live-verified (needs market hours + a held position). |
+| **K** — Performance dashboard | `a985525` (CLI) + `0d99e9d` (outlier fix) | New `vibe-trade report --days N` CLI command. Read-only against `daily_pnl` + `portfolio_snapshot` + `trades` — no IB connection. New `src/vibe_trade/reports/` module (data + metrics + render split). Five output sections: header (with small-sample caveat), equity & risk (sharpe / drawdown with peak+trough dates / CAGR / best+worst day), current holdings (top/bottom 5 by unrealized P&L), trade activity (per-day entries, outlier-flagged), trade stats (n/a block until first SELL fires). Derives activity from `trades.entry_time` because the `daily_pnl.trades_opened` column is unreliable. Smoke-tested against the May 11–25 paper-run DB sample — caught a UX bug where outlier days with zero activity (e.g. 5/13 Gateway outage) didn't surface in the activity table; fixed by merging activity-dates with outlier-dates. Pure metrics layer designed to back a future web UI. +23 tests. |
 | **H** — Live paper week + Tier-1 fixes + Enhancement #1 | `2de11e1` | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement, fixed Saturday 2026-05-16: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. **Validated live Mon–Wed 2026-05-18..20:** Bug #1 confirmed (`Failed=0`), Bug #5 confirmed (`opened` == `placed`, zero drift), Bug #6 proven on the 5/20 Gateway outage (two `[CRITICAL]` alerts delivered where 5/13 was silent), force-trim deployed (never triggered — book never exceeded the 50 cap). 22 new tests. Full findings + validation log in `docs/SESSION_H_FINDINGS.md`. Tier-3 hygiene deferred. |
 
 ### Not started (per ROADMAP)
 
-- **Session K** — Performance dashboard (`vibe-trade report`)
 - **Session L** — Multi-strategy (Donchian + RSI + MA crossover via `Order.orderRef`)
 - **Session M** — Portfolio allocation rules (per-strategy caps)
 - **Phase 4** — Resilience hardening (late-fill edge case, reconnect logic, DB migrations, disaster recovery)
@@ -249,31 +249,39 @@ cd deploy && ./smoke-test.sh                         # run all three sequentiall
 
 ### Immediate next concrete deliverable
 
-**Session J is CLOSED** (2026-05-22). `close-position` + `cancel-pending` CLI
-commands, +17 tests. `cancel-pending` verified end-to-end against live IB
-paper including the cross-client cancel fix (place as client 1 →
-`cancel-pending` as client 1 cancels it → confirmed gone).
+**Session K is CLOSED** (2026-05-26). `vibe-trade report --days N` ships as
+a read-only performance dashboard pulling from `daily_pnl` +
+`portfolio_snapshot` + `trades`. +23 tests. Manually smoke-tested against the
+May 11–25 paper-run DB sample (extracted from the `deploy_vibe-data` Docker
+volume on the prod server): all five sections render correctly; the 5/13
+Gateway-outage day is flagged as an outlier with a `!warn` mark in the
+activity table and a footnote noting it inflates Best day / CAGR.
 
-**Session K — Performance dashboard:** `vibe-trade report --days N` — sharpe,
-drawdown, win rate from `daily_pnl` + `trades`. Pure read-only against the DB,
-no IB connection.
+**Session L — Multi-strategy:** Strategy registry V2 (Donchian + RSI mean
+reversion + MA crossover) using `Order.orderRef = strategy_id`. Submit
+sets the tag; record reads `fill.execution.orderRef` to populate
+`strategy_name`. Position sizing gets a per-strategy override hook.
 
-**Carry-forward notes from Session J:**
-- **`close-position` was not live-verified** — unit-tested only. It is thin
-  glue over `get_positions` + `place_market_order` (both exercised live daily
-  by submit; `order_ref`-tagged SELLs proven via force-trim). Low risk; a
-  1-share live smoke test during market hours would close the last gap.
-- **Cross-client IB gotcha:** `ib.openTrades()` and `cancelOrder` are scoped to
-  the placing client. `cancel-pending` works only because it connects as
-  submit's `client_id=1`. `reqAllOpenOrders` gives visibility but not cancel
-  authority. See the `jobs/override.py` module docstring.
-
-**Loose end still open (pre-existing, predates Session J):**
-- **Fix the test environment.** The venv is missing `matplotlib` (3× failing
-  `test_backtest_plot`). The uncommitted `pyproject.toml`/`uv.lock` changes
-  bumped `pytest` into the *main* deps — reconcile that and run
-  `uv pip install -e ".[dev]"`. Also fix `test_risk_manager.py::_pos_with_pnl`
-  — divides by `qty`, crashing the `qty=0` case (1 failing test).
+**Carry-forward notes from Session K:**
+- The `daily_pnl.trades_opened` column is unreliable (reads 0 on days with
+  confirmed entries — visible in the sample DB on 5/11, 5/12, 5/13). The
+  report works around it by deriving activity from `trades.entry_time`, but
+  the column being wrong is a real reconcile defect worth fixing in a
+  future session.
+- The 5/12 row shows `open_positions_count=61` (above the 50 cap) — another
+  reconcile-time anomaly worth investigating. Likely a brief
+  SUBMITTED+OPEN overlap counted twice.
+- The user mentioned plans for a future web UI to display the dashboard.
+  The metrics layer (`reports/metrics.py` + `reports/data.py`) is pure and
+  reusable; a web layer renders the same dataclasses to HTML/JSON instead
+  of calling `render.py`.
+- The 4 "failing" tests from Session J's hand-off (3× `test_backtest_plot`,
+  1× `test_risk_manager`) are no longer failing — full suite is
+  `309 passed, 1 skipped, 0 failing`. Either matplotlib was installed or
+  the tests now skip cleanly. Worth verifying before declaring it solved.
+- A throwaway `config/config.local.toml` was created during smoke testing
+  (sample-DB path override). It's untracked and gitignored implicitly via
+  the `config/` directory convention — leave alone.
 
 ### Known operational notes (carry forward)
 
@@ -286,7 +294,7 @@ no IB connection.
 
 ### After the above (per ROADMAP)
 
-- **Session K:** Performance dashboard (`vibe-trade report`)
+- **Session L:** Multi-strategy registry (Donchian + RSI + MA via `orderRef`)
 
 ### Open questions deferred to later sessions
 
