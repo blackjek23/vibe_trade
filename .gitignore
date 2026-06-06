@@ -9,10 +9,15 @@ build/
 venv/
 .env
 config/config.toml
+config/config.local.toml
 /data/
 /logs/
 /reports/
+/backtests/
 *.db
+
+# Claude Code local tooling/settings (not project source)
+.claude/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
