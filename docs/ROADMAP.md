@@ -52,6 +52,17 @@ This document maps what comes next. Sessions are numbered F+ to continue the A�
   user mentioned wanting a web UI separately, and `reports/metrics.py` +
   `reports/data.py` are pure modules designed to back it.
 
+### Session K-plus — Plot side-addon (next)
+- `vibe-trade report --plot` writes a matplotlib PNG to
+  `reports/YYYY-MM-DD.png`: equity curve + holdings bar chart, mirroring
+  `backtest/plot.py` style.
+- Deliberately disposable. Bridges the gap until the BI web project
+  (Phase 6) lands. Picked over jumping straight to BI because the user
+  wants visual feedback *now*, and the BI work is heavier infra better
+  timed once more data exists.
+- ~1 session: new `reports/plot.py` + a flag wired into the existing
+  `report` command + 2–3 smoke tests.
+
 ---
 
 ## Phase 3 — Multi-strategy (deferred until after live paper validation)
@@ -87,7 +98,27 @@ This document maps what comes next. Sessions are numbered F+ to continue the A�
 - Limit orders / OCO brackets
 - Short positions
 - Universe expansion (Russell 2000, sector ETFs, custom lists)
-- Web dashboard or Telegram bot for ad-hoc queries
+- Telegram bot for ad-hoc queries (web dashboard moved to Phase 6)
+
+---
+
+## Phase 6 — BI web project (planned)
+
+After the bot has run headless for "some time" and accumulated enough
+data to make charts meaningful, replace the Session K terminal report
+and Session K-plus PNGs with a real BI dashboard.
+
+- Point **Metabase** or **Grafana** at the existing SQLite DB via their
+  SQLite plugins. Zero custom Python — chart `daily_pnl`,
+  `portfolio_snapshot`, and `trades` directly.
+- Run as an additional `docker compose` service alongside the existing
+  submit/record/reconcile stack. `network_mode: host` already gives it
+  the DB volume mount.
+- `reports/metrics.py` definitions become the canonical formulas
+  mirrored in the BI tool (sharpe, drawdown, win rate, profit factor).
+- Headless access via SSH tunnel or a port exposed behind auth.
+- This replaces both the terminal-rendered report (kept as a CLI
+  fallback) and the disposable PNGs.
 
 ---
 

@@ -93,10 +93,12 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ### Not started (per ROADMAP)
 
+- **Session K-plus** — `vibe-trade report --plot` matplotlib PNG side-addon (small, disposable; bridges the gap until the BI project lands)
 - **Session L** — Multi-strategy (Donchian + RSI + MA crossover via `Order.orderRef`)
 - **Session M** — Portfolio allocation rules (per-strategy caps)
 - **Phase 4** — Resilience hardening (late-fill edge case, reconnect logic, DB migrations, disaster recovery)
 - **Phase 5** — Live trading switch, multi-account, limit orders, shorts, universe expansion
+- **Phase 6 (planned)** — BI web project: point Metabase or Grafana at the SQLite DB for headless dashboards. Replaces the throwaway PNGs from Session K-plus. Trigger: after the bot has run headless for "some time" and accumulated enough data to make charts meaningful.
 
 ---
 
@@ -257,10 +259,25 @@ volume on the prod server): all five sections render correctly; the 5/13
 Gateway-outage day is flagged as an outlier with a `!warn` mark in the
 activity table and a footnote noting it inflates Best day / CAGR.
 
-**Session L — Multi-strategy:** Strategy registry V2 (Donchian + RSI mean
-reversion + MA crossover) using `Order.orderRef = strategy_id`. Submit
-sets the tag; record reads `fill.execution.orderRef` to populate
+**Next: Session K-plus — `vibe-trade report --plot` (matplotlib PNG side-addon).**
+Equity curve + holdings bar chart, written to `reports/YYYY-MM-DD.png`,
+mirroring the existing `backtest/plot.py` style. Small (~1 session),
+deliberately disposable — will be replaced by the BI web project once
+the bot has accumulated enough headless-running data to make a real
+dashboard worthwhile. Picked over jumping straight to BI because: the
+user explicitly wants visual feedback now, and the BI work is heavier
+infra (1–2 weekends) better timed once more data exists.
+
+**Then Session L — Multi-strategy:** Strategy registry V2 (Donchian + RSI
+mean reversion + MA crossover) using `Order.orderRef = strategy_id`.
+Submit sets the tag; record reads `fill.execution.orderRef` to populate
 `strategy_name`. Position sizing gets a per-strategy override hook.
+
+**Long-term — BI web project (Phase 6):** Metabase or Grafana pointed at
+the SQLite DB. The user plans this *after* the bot has run headless for
+"some time", once there are months of `daily_pnl` and a meaningful pool
+of closed trades. `reports/metrics.py` stays valuable as the canonical
+metric definitions to mirror inside whichever BI tool wins.
 
 **Carry-forward notes from Session K:**
 - The `daily_pnl.trades_opened` column is unreliable (reads 0 on days with
@@ -294,7 +311,9 @@ sets the tag; record reads `fill.execution.orderRef` to populate
 
 ### After the above (per ROADMAP)
 
+- **Session K-plus:** `vibe-trade report --plot` matplotlib PNG (disposable)
 - **Session L:** Multi-strategy registry (Donchian + RSI + MA via `orderRef`)
+- **Phase 6:** BI web project (Metabase/Grafana on SQLite) once data has accumulated
 
 ### Open questions deferred to later sessions
 
