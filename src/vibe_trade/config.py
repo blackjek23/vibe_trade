@@ -97,6 +97,7 @@ class GeneralConfig(BaseModel):
     log_level: str = "INFO"
     log_file: str = "logs/vibe_trade.log"
     db_path: str = "data/vibe_trade.db"
+    reports_dir: str = "reports"
 
     @field_validator("log_level")
     @classmethod

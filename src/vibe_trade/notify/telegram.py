@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from telegram import Bot
 
@@ -44,3 +45,15 @@ class TelegramNotifier(BaseNotifier):
 
     async def notify_panic(self, message: str) -> None:
         await self._send(f"[PANIC] {message}")
+
+    async def notify_report_image(self, image_path: Path, caption: str = "") -> None:
+        if not self.bot or not self.chat_id:
+            logger.warning("Telegram not configured, skipping report image")
+            return
+        try:
+            with open(image_path, "rb") as photo:
+                await self.bot.send_photo(
+                    chat_id=self.chat_id, photo=photo, caption=caption or None,
+                )
+        except Exception as e:
+            logger.error(f"Failed to send Telegram report image: {e}")

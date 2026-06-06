@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from vibe_trade.notify.base import BaseNotifier
 
@@ -21,3 +22,6 @@ class ConsoleNotifier(BaseNotifier):
 
     async def notify_panic(self, message: str) -> None:
         logger.warning(f"[PANIC] {message}")
+
+    async def notify_report_image(self, image_path: Path, caption: str = "") -> None:
+        logger.info(f"[REPORT] would send image: {image_path} ({caption})")

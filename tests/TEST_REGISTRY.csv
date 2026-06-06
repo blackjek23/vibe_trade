@@ -312,3 +312,11 @@ test_report.py,render_report,test_render_report_full_data_emits_key_sections,Ful
 test_report.py,render_report,test_render_report_empty_prints_no_daily_pnl_sentinel,Empty metrics prints "No daily P&L data" sentinel and returns early
 test_report.py,cli,test_cli_report_exits_zero_and_emits_header,End-to-end CliRunner: seeds tmp DB invokes report exits 0 emits header
 test_report.py,render_report,test_render_report_surfaces_outlier_dates_with_no_activity,Outlier dates appear in activity even with zero entries so !warn footnote is not orphaned
+test_report_plot.py,TestReportPlot,test_png_created_full_data,Weekly dashboard PNG created with equity+holdings+metrics exists and non-empty
+test_report_plot.py,TestReportPlot,test_filename_encodes_date_and_period,PNG filename is {today}-weekly.png so monthly differs by period_label
+test_report_plot.py,TestReportPlot,test_empty_window_still_produces_sentinel_png,Empty window emits sentinel PNG so Saturday job always produces a file
+test_report_plot.py,TestReportPlot,test_holdings_without_closed_trades_renders,Holdings present but zero closed trades renders without error
+test_report_plot.py,TestReportPlot,test_single_point_window_renders_without_crash,<2 equity points hits insufficient-data branch without raising
+test_report_plot.py,TestReportPlot,test_creates_output_dir_if_missing,save_report_plot mkdirs a missing nested output dir
+test_notify_integration.py,unit,test_telegram_notify_report_image_no_raise_when_unconfigured,Unconfigured Telegram bot no-ops on notify_report_image instead of raising
+test_notify_integration.py,unit,test_console_notify_report_image_logs_path,ConsoleNotifier.notify_report_image logs the image path

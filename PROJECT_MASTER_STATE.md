@@ -4,12 +4,11 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-05-26 (Session K — performance dashboard — CLOSED)
-**HEAD commit:** `37c4628` Session K: TEST_REGISTRY.csv +1 row for outlier-surfacing regression
-**Tests:** 313 collected (309 passing, 1 skipped, 0 failing; +23 net this session).
-  The 4 pre-existing failures from Session J (3× `test_backtest_plot`,
-  1× `test_risk_manager`) appear to have resolved (matplotlib now present /
-  `qty=0` no longer hit). Confirm in §7.
+**Last updated:** 2026-06-06 (Session K-plus — weekly report image — CLOSED)
+**HEAD commit:** `5f66d1d` Roadmap: defer BI dashboard, add Session K-plus plot side-addon
+  (Session K-plus changes staged, not yet committed.)
+**Tests:** 321 passing, 0 failing (+8 this session: 6 plot, 2 notifier-image).
+  `test_report_plot` requires matplotlib (the `plot` extra) — skips cleanly when absent.
 **Branch:** `main` — synced with `origin/main`.
 
 ---
@@ -93,7 +92,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 ### Not started (per ROADMAP)
 
-- **Session K-plus** — `vibe-trade report --plot` matplotlib PNG side-addon (small, disposable; bridges the gap until the BI project lands)
+- **Session K-plus monthly follow-up** — `report-monthly` (~30-day window) reusing `save_report_plot(period_label="Monthly")` + a monthly cron line; trivial.
 - **Session L** — Multi-strategy (Donchian + RSI + MA crossover via `Order.orderRef`)
 - **Session M** — Portfolio allocation rules (per-strategy caps)
 - **Phase 4** — Resilience hardening (late-fill edge case, reconnect logic, DB migrations, disaster recovery)
@@ -259,14 +258,22 @@ volume on the prod server): all five sections render correctly; the 5/13
 Gateway-outage day is flagged as an outlier with a `!warn` mark in the
 activity table and a footnote noting it inflates Best day / CAGR.
 
-**Next: Session K-plus — `vibe-trade report --plot` (matplotlib PNG side-addon).**
-Equity curve + holdings bar chart, written to `reports/YYYY-MM-DD.png`,
-mirroring the existing `backtest/plot.py` style. Small (~1 session),
-deliberately disposable — will be replaced by the BI web project once
-the bot has accumulated enough headless-running data to make a real
-dashboard worthwhile. Picked over jumping straight to BI because: the
-user explicitly wants visual feedback now, and the BI work is heavier
-infra (1–2 weekends) better timed once more data exists.
+**Session K-plus is CLOSED** (2026-06-06). Scope refined from an on-demand
+`--plot` flag to a **scheduled weekly job**: `vibe-trade report-weekly`
+(Saturday 09:00) renders one dashboard PNG to `general.reports_dir`
+(`reports/<date>-weekly.png`) — equity curve + holdings bar chart + key-metrics
+text panel, strict last-7-day window. Read-only; reuses `reports/data.py` +
+`reports/metrics.py`. Delivered to Telegram via a new `notify_report_image`
+(`send_photo`) and written to disk regardless; empty window emits a sentinel
+PNG. New `reports/plot.py` mirrors `backtest/plot.py`. Deploy: `report-weekly`
+compose service + `./reports` volume + Saturday cron line; Dockerfile installs
+the `.[plot]` extra (matplotlib) so the report job runs in the image. +8 tests.
+Manually verified against the sample DB (renders correctly, x-ticks pinned to
+data dates). **Monthly is the trivial follow-up:**
+`save_report_plot(period_label="Monthly")` + a `report-monthly` command (~30-day
+window) + a monthly cron line.
+
+**Next: Session L — Multi-strategy** (see below).
 
 **Then Session L — Multi-strategy:** Strategy registry V2 (Donchian + RSI
 mean reversion + MA crossover) using `Order.orderRef = strategy_id`.
@@ -311,7 +318,7 @@ metric definitions to mirror inside whichever BI tool wins.
 
 ### After the above (per ROADMAP)
 
-- **Session K-plus:** `vibe-trade report --plot` matplotlib PNG (disposable)
+- **Session K-plus monthly:** `report-monthly` (~30-day window) — trivial reuse of `save_report_plot(period_label="Monthly")`
 - **Session L:** Multi-strategy registry (Donchian + RSI + MA via `orderRef`)
 - **Phase 6:** BI web project (Metabase/Grafana on SQLite) once data has accumulated
 

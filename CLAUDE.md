@@ -33,7 +33,7 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-V2 implementation + Session I (backtest run, profitable) + Session F (notifications + JSON-rotating logs) + Session G (Docker deployment). **231 tests passing.** Ready for Session H (live paper week).
+V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image). **321 tests passing.** See `PROJECT_MASTER_STATE.md` for the live status.
 
 - **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done.
 - **Session I** (backtest framework + first run + benchmarks): done. Strategy beats SPY/QQQ on Sharpe (1.14 vs 0.78/0.85) with half the drawdown. Verdict: profitable, proceed forward.
@@ -54,11 +54,12 @@ src/vibe_trade/
 ├── data/          # yfinance provider, SP500 universe, sp100_top static list
 ├── db/            # SQLAlchemy models, repositories, engine
 ├── jobs/          # V2 jobs: submit.py, record.py, reconcile.py, override.py
-├── backtest/      # data.py, engine.py, metrics.py (Session I)
-├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic)
+├── backtest/      # data.py, engine.py, metrics.py, plot.py (Session I)
+├── reports/       # data.py, metrics.py, render.py (Session K) + plot.py (Session K-plus weekly PNG)
+├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic + report-weekly image)
 ├── risk/          # manager.py, position_sizer.py, panic.py
 ├── strategy/      # base.py, examples/donchian.py
-└── cli.py         # typer: submit, record, reconcile, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, panic
+└── cli.py         # typer: submit, record, reconcile, report, report-weekly, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, panic
 
 tests/
 ├── TEST_REGISTRY.csv    # central list of all tests (update after every change)
@@ -69,10 +70,10 @@ tests/
 
 deploy/
 ├── Dockerfile                 # python:3.11-slim + uv, single image for all jobs
-├── docker-compose.yml         # submit, record, reconcile services (network_mode: host)
+├── docker-compose.yml         # submit, record, reconcile, report-weekly services (network_mode: host)
 ├── .env.example               # Telegram secrets template
-├── crontab.example            # Mon-Fri 16:00/16:25/23:30 Asia/Jerusalem
-├── smoke-test.sh              # sequential run of all three jobs
+├── crontab.example            # Mon-Fri 16:00/16:25/23:30 + Sat 09:00 report-weekly, Asia/Jerusalem
+├── smoke-test.sh              # sequential run of all jobs
 └── README.md                  # full setup, scheduling, troubleshooting guide
 
 docs/
@@ -121,6 +122,7 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 .venv/Scripts/python -m vibe_trade submit       # 16:00 — exits then entries
 .venv/Scripts/python -m vibe_trade record       # 16:25 — persist today's fills
 .venv/Scripts/python -m vibe_trade reconcile    # 23:30 — finalize statuses + snapshot
+.venv/Scripts/python -m vibe_trade report-weekly # Sat 09:00 — weekly dashboard PNG + Telegram (needs .[plot])
 
 # Backtest
 .venv/Scripts/python -m vibe_trade backtest --start 2018-01-01 --end 2026-01-01

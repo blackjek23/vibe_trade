@@ -247,6 +247,22 @@ def test_config_check_does_not_reference_nonexistent_strategy_field():
     assert "config.strategy.active" not in source
 
 
+async def test_telegram_notify_report_image_no_raise_when_unconfigured(tmp_path):
+    """Unconfigured Telegram bot must no-op (warn), not raise, on image send."""
+    img = tmp_path / "report.png"
+    img.write_bytes(b"\x89PNG\r\n")  # not a real PNG; send is short-circuited
+    notifier = TelegramNotifier(TelegramConfig(enabled=True, token="", chat_id=""))
+    assert notifier.bot is None
+    await notifier.notify_report_image(img, caption="weekly")  # no exception
+
+
+async def test_console_notify_report_image_logs_path(tmp_path, caplog):
+    img = tmp_path / "report.png"
+    with caplog.at_level(logging.INFO):
+        await ConsoleNotifier().notify_report_image(img, caption="weekly")
+    assert any(str(img) in r.message for r in caplog.records)
+
+
 def test_setup_logging_no_file_when_log_file_none():
     from vibe_trade.cli import _setup_logging
 

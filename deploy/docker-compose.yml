@@ -44,5 +44,21 @@ services:
     network_mode: host
     profiles: ["job"]
 
+  report-weekly:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["report-weekly", "--config", "/config/config.toml"]
+    environment:
+      - TZ=Asia/Jerusalem
+    volumes:
+      - vibe-data:/app/data
+      - ./logs:/app/logs
+      - ./config:/config:ro
+      - ./reports:/app/reports
+    env_file: .env
+    network_mode: host
+    profiles: ["job"]
+
 volumes:
   vibe-data:

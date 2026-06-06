@@ -11,6 +11,7 @@ venv/
 config/config.toml
 /data/
 /logs/
+/reports/
 *.db
 .mypy_cache/
 .pytest_cache/
@@ -21,4 +22,5 @@ htmlcov/
 # Deploy runtime (not committed)
 deploy/config/
 deploy/logs/
+deploy/reports/
 deploy/.env

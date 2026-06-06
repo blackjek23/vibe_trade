@@ -52,16 +52,21 @@ This document maps what comes next. Sessions are numbered F+ to continue the A�
   user mentioned wanting a web UI separately, and `reports/metrics.py` +
   `reports/data.py` are pure modules designed to back it.
 
-### Session K-plus — Plot side-addon (next)
-- `vibe-trade report --plot` writes a matplotlib PNG to
-  `reports/YYYY-MM-DD.png`: equity curve + holdings bar chart, mirroring
-  `backtest/plot.py` style.
-- Deliberately disposable. Bridges the gap until the BI web project
-  (Phase 6) lands. Picked over jumping straight to BI because the user
-  wants visual feedback *now*, and the BI work is heavier infra better
-  timed once more data exists.
-- ~1 session: new `reports/plot.py` + a flag wired into the existing
-  `report` command + 2–3 smoke tests.
+### Session K-plus — Weekly report image ✅ Done (2026-06-06)
+- Scope refined from an on-demand `--plot` flag to a **scheduled weekly job**.
+  `vibe-trade report-weekly` (Saturday 09:00 Asia/Jerusalem) renders a single
+  dashboard PNG to `general.reports_dir` (`reports/<date>-weekly.png`):
+  equity curve + holdings bar chart + key-metrics text panel. Strict last-7-day
+  window. Read-only (no IB); reuses `reports/data.py` + `reports/metrics.py`.
+- Delivered to Telegram via a new `notify_report_image` (`send_photo`); writes
+  the file regardless. Empty window still emits a sentinel PNG so the job
+  always reports it ran.
+- New `reports/plot.py` (mirrors `backtest/plot.py` style), `report-weekly` CLI
+  command, Docker `report-weekly` service + Saturday cron line. Dockerfile now
+  installs the `.[plot]` extra (matplotlib) for the report job.
+- **Monthly is the trivial follow-up:** `save_report_plot(period_label="Monthly")`
+  + a `report-monthly` command with a ~30-day window + a monthly cron line.
+- Deliberately disposable. Bridges the gap until the BI web project (Phase 6).
 
 ---
 

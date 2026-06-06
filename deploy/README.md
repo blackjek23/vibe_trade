@@ -1,6 +1,7 @@
 # vibe-trade Deployment Guide
 
-Docker-based deployment for the three V2 daily jobs (submit, record, reconcile).
+Docker-based deployment for the three V2 daily jobs (submit, record, reconcile)
+plus the weekly report job (report-weekly).
 
 ## Prerequisites
 
@@ -64,18 +65,39 @@ crontab crontab.example
 crontab -l  # verify
 ```
 
-The crontab runs three jobs Mon-Fri:
+The crontab runs three daily jobs Mon-Fri, plus a weekly report on Saturday:
 | Time (Jerusalem) | Job | What it does |
 |---|---|---|
-| 16:00 | submit | Place exit + entry orders on IB |
-| 16:25 | record | Persist today's fills to DB |
-| 23:30 | reconcile | Finalize statuses, snapshot, daily P&L |
+| 16:00 Mon-Fri | submit | Place exit + entry orders on IB |
+| 16:25 Mon-Fri | record | Persist today's fills to DB |
+| 23:30 Mon-Fri | reconcile | Finalize statuses, snapshot, daily P&L |
+| 09:00 Sat | report-weekly | Render the weekly dashboard PNG + Telegram |
 
 **Important:** The host timezone must be `Asia/Jerusalem`. Verify with `timedatectl`.
 The containers also set `TZ=Asia/Jerusalem` (in `docker-compose.yml` and the
 `Dockerfile`), so log timestamps match IB fill times without any host-side fix.
 
 If your repo is not at `/opt/vibe-trade`, edit the paths in `crontab.example` before installing.
+
+### Weekly report
+
+`report-weekly` is read-only (no IB connection): it reads `daily_pnl`,
+`portfolio_snapshot`, and `trades` for the last 7 days and renders a single
+dashboard PNG — equity curve, holdings bar chart, and key metrics. The image is
+written to `deploy/reports/<date>-weekly.png` (host-side, via the `./reports`
+volume mount) and, when Telegram is enabled, sent to your chat as a photo.
+
+Run it manually any time:
+```bash
+docker compose run --rm report-weekly      # Linux/prod
+```
+On Windows dev, run it directly without Docker:
+```bash
+.venv/Scripts/python -m vibe_trade report-weekly
+```
+The PNG lands in `reports/` (or whatever `general.reports_dir` is set to).
+Matplotlib ships in the image via the `plot` extra (`pip install ".[plot]"`
+locally); the three trading jobs don't need it.
 
 ## Log Locations
 

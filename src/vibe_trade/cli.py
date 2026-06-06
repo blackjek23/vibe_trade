@@ -929,6 +929,84 @@ def report(
         session.close()
 
 
+@app.command(name="report-weekly")
+def report_weekly(
+    config_path: Optional[str] = typer.Option(None, "--config", "-c",
+                                              help="Config file path"),
+) -> None:
+    """Weekly report job (Saturday morning).
+
+    Builds a dashboard PNG (equity curve + holdings + metrics) over the last
+    7 days, writes it to ``general.reports_dir``, and sends it to Telegram.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    _run_with_crash_alert("report-weekly", config, _run_report_weekly_cli)
+
+
+async def _run_report_weekly_cli(config) -> None:
+    from datetime import date as _date
+    from pathlib import Path
+
+    from vibe_trade.reports.data import (
+        detect_outlier_days,
+        load_closed_trades,
+        load_daily_pnl,
+        load_latest_holdings,
+        load_trade_activity,
+    )
+    from vibe_trade.reports.metrics import (
+        compute_closed_trade_stats,
+        compute_metrics,
+    )
+    from vibe_trade.reports.plot import save_report_plot
+
+    window_days = 7
+    notifier = _get_notifier(config)
+    session_factory = init_db(config.general.db_path)
+    session = session_factory()
+    try:
+        today = _date.today()
+        daily_rows = load_daily_pnl(session, window_days, today)
+        holdings_as_of, holdings = load_latest_holdings(session)
+        activity = load_trade_activity(session, window_days, today)
+        closed = load_closed_trades(session, window_days, today)
+        outliers = detect_outlier_days(daily_rows)
+
+        metrics = compute_metrics(daily_rows)
+        closed_stats = compute_closed_trade_stats(closed)
+
+        png_path = save_report_plot(
+            metrics=metrics,
+            daily_rows=daily_rows,
+            holdings=holdings,
+            holdings_as_of=holdings_as_of,
+            activity=activity,
+            closed_stats=closed_stats,
+            outliers=outliers,
+            window_days=window_days,
+            today=today,
+            output_path=Path(config.general.reports_dir),
+            period_label="Weekly",
+        )
+    finally:
+        session.close()
+
+    console.print(f"[green]Weekly report saved -> {png_path}[/green]")
+
+    if metrics.sample_size == 0:
+        caption = f"vibe_trade weekly report ({today}) -- no P&L data this week."
+    else:
+        caption = (
+            f"vibe_trade weekly report ({today})\n"
+            f"Return {metrics.total_return_pct:+.2f}%  "
+            f"Sharpe {metrics.sharpe:.2f}  "
+            f"MaxDD {metrics.max_drawdown_pct:.2f}%  "
+            f"Opened {sum(activity.values())}  Closed {closed_stats.n}"
+        )
+    await notifier.notify_report_image(png_path, caption=caption)
+
+
 @app.command(name="config-check")
 def config_check(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),

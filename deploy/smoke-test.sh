@@ -24,4 +24,8 @@ echo "=== Smoke test: reconcile (23:30 job) ==="
 docker compose run --rm reconcile
 
 echo ""
-echo "=== All three jobs completed successfully ==="
+echo "=== Smoke test: report-weekly (Saturday job) ==="
+docker compose run --rm report-weekly
+
+echo ""
+echo "=== All jobs completed successfully ==="

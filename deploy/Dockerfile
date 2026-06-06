@@ -18,6 +18,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml .
 COPY src/ src/
-RUN uv pip install --system --no-cache .
+# Include the `plot` extra (matplotlib): the weekly report job renders a PNG.
+# The three trading jobs don't need it, but a single image serves all jobs.
+RUN uv pip install --system --no-cache ".[plot]"
 
 ENTRYPOINT ["python", "-m", "vibe_trade"]
