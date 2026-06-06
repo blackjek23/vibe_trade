@@ -19,8 +19,12 @@ from vibe_trade.db.repository import TradeRepository
 from vibe_trade.jobs.record import run_record
 
 
-def _fill(perm_id: int, order_id: int, symbol: str, side: str, shares: int, price: float = 100.0):
-    """Build a Fill-shaped SimpleNamespace."""
+def _fill(
+    perm_id: int, order_id: int, symbol: str, side: str, shares: int,
+    price: float = 100.0, order_ref: str = "",
+):
+    """Build a Fill-shaped SimpleNamespace. `order_ref` mirrors the strategy id
+    submit stamps on the order (read back via execution.orderRef)."""
     return SimpleNamespace(
         contract=SimpleNamespace(symbol=symbol),
         execution=SimpleNamespace(
@@ -29,6 +33,7 @@ def _fill(perm_id: int, order_id: int, symbol: str, side: str, shares: int, pric
             shares=float(shares),
             price=price,
             side=side,  # "BOT" or "SLD"
+            orderRef=order_ref,
         ),
         commissionReport=SimpleNamespace(realizedPNL=0.0, commission=1.0),
         time=datetime.now(),
@@ -123,6 +128,48 @@ class TestBuyFills:
 
         row = db_session.query(Trade).first()
         assert row.strategy_name == "ma_crossover"
+
+
+class TestStrategyAttribution:
+    """Session L: strategy_name comes from the fill's orderRef, not a constant."""
+
+    async def test_order_ref_sets_strategy_name(self, db_session: Session):
+        broker = MockBroker(
+            fills=[_fill(111, 21, "T", "BOT", 10, order_ref="sma")]
+        )
+        repo = TradeRepository(db_session)
+        await run_record(broker=broker, repo=repo)
+        assert db_session.query(Trade).first().strategy_name == "sma"
+
+    async def test_order_ref_overrides_fallback_arg(self, db_session: Session):
+        # Per-fill orderRef wins over the fallback strategy_name argument.
+        broker = MockBroker(
+            fills=[_fill(111, 21, "T", "BOT", 10, order_ref="ema")]
+        )
+        repo = TradeRepository(db_session)
+        await run_record(broker=broker, repo=repo, strategy_name="donchian")
+        assert db_session.query(Trade).first().strategy_name == "ema"
+
+    async def test_empty_order_ref_uses_fallback(self, db_session: Session):
+        # Legacy/pre-L fill with no orderRef -> falls back to the default arg.
+        broker = MockBroker(
+            fills=[_fill(111, 21, "T", "BOT", 10, order_ref="")]
+        )
+        repo = TradeRepository(db_session)
+        await run_record(broker=broker, repo=repo, strategy_name="donchian")
+        assert db_session.query(Trade).first().strategy_name == "donchian"
+
+    async def test_distinct_strategies_attributed_per_fill(self, db_session: Session):
+        broker = MockBroker(
+            fills=[
+                _fill(111, 21, "AAA", "BOT", 5, order_ref="sma"),
+                _fill(222, 22, "BBB", "BOT", 5, order_ref="macd"),
+            ]
+        )
+        repo = TradeRepository(db_session)
+        await run_record(broker=broker, repo=repo)
+        by_symbol = {t.symbol: t.strategy_name for t in db_session.query(Trade).all()}
+        assert by_symbol == {"AAA": "sma", "BBB": "macd"}
 
 
 class TestSellFills:

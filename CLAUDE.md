@@ -39,7 +39,7 @@ V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image).
 - **Session I** (backtest framework + first run + benchmarks): done. Strategy beats SPY/QQQ on Sharpe (1.14 vs 0.78/0.85) with half the drawdown. Verdict: profitable, proceed forward.
 - **Session F** (notifications + structured logging): done. All three V2 jobs send Telegram via the configured notifier (Console fallback when off). Logs are plain to stdout + JSON to `logs/vibe_trade.log` with daily rotation, 7-day retention. DB is the source of truth for analytics; logs are for short-term ops only.
 - **Session G** (Docker deployment): done. Single image (python:3.11-slim + uv), three compose services, `network_mode: host` for IB Gateway. Host crontab triggers jobs Mon–Fri. Includes smoke-test script and full deploy README.
-- **Strategy:** Donchian channel breakout, N=20, symmetric, excluding the bar being evaluated. Single strategy for first iteration; locked in `src/vibe_trade/strategy/examples/donchian.py`.
+- **Strategies:** Multi-strategy registry (Session L). `strategy/registry.py` maps ids → strategies, built from the config `[[strategies]]` list (order = entry priority). Available: Donchian breakout (`"donchian"`, N=20), SMA crossover (`"sma"` 20/50), EMA crossover (`"ema"` 12/26), MACD crossover (`"macd"` 12/26/9) — the three crossovers use regime/state semantics (BUY fast>slow, SELL fast<slow). Submit: priority conflict resolution + strategy-scoped exits (`order_ref=<id>`); record reads `orderRef`→`strategy_name`. Strategies are stateless (`evaluate(symbol, candles)` — no entry-price/stop awareness), so stop/target/trailing/intraday strategies need new machinery.
 - **Sizing:** 1.8% of net_liquidation per BUY, 50-position cap, floor to whole shares (cents-based arithmetic to defeat float imprecision).
 - **Client IDs:** submit=1, record=2, reconcile=3, notifier=8 (when needed for IB reads). Constants in `jobs/submit.py` and `scratches/scratch_notify_submit.py`.
 - **Cross-process state:** record + reconcile drive from `ib.fills()` (intact across processes), with `permId` as the dedup key (`ib.trades().order` fields reset to 0 on reconnect).
@@ -58,7 +58,7 @@ src/vibe_trade/
 ├── reports/       # data.py, metrics.py, render.py (Session K) + plot.py (Session K-plus weekly PNG)
 ├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic + report-weekly image)
 ├── risk/          # manager.py, position_sizer.py, panic.py
-├── strategy/      # base.py, examples/donchian.py
+├── strategy/      # base.py, registry.py, examples/{donchian,sma_crossover,ema_crossover,macd_crossover}.py
 └── cli.py         # typer: submit, record, reconcile, report, report-weekly, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, panic
 
 tests/

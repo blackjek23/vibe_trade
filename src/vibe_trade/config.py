@@ -80,6 +80,22 @@ class RiskConfig(BaseModel):
     max_open_positions: int = Field(default=50, ge=1, le=100)
 
 
+class StrategyConfig(BaseModel):
+    """One active strategy in the Session L multi-strategy registry.
+
+    Order in ``AppConfig.strategies`` is the priority order used for entry
+    conflict resolution (first enabled strategy that BUYs an un-held ticker wins).
+    """
+
+    id: str  # registry key, e.g. "donchian", "sma", "ema", "macd"
+    enabled: bool = True
+    # Per-strategy position size override; None -> global risk.pct_per_position.
+    pct_per_position: float | None = Field(default=None, gt=0, le=1)
+    # Strategy-specific knobs consumed by the registry factory (e.g. period,
+    # fast/slow/signal). Numeric for TOML simplicity.
+    params: dict[str, float] = Field(default_factory=dict)
+
+
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
@@ -122,6 +138,11 @@ class AppConfig(BaseSettings):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    # Multi-strategy registry (Session L). Default preserves single-Donchian
+    # behavior when the [[strategies]] section is absent. Order = priority.
+    strategies: list[StrategyConfig] = Field(
+        default_factory=lambda: [StrategyConfig(id="donchian")]
+    )
 
 
 def load_config(config_path: str | Path | None = None) -> AppConfig:

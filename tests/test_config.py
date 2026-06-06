@@ -11,6 +11,7 @@ from vibe_trade.config import (
     GeneralConfig,
     RiskConfig,
     SchedulerConfig,
+    StrategyConfig,
     UniverseConfig,
     load_config,
 )
@@ -189,6 +190,52 @@ class TestAppConfig:
         assert c.general.mode == "paper"
         assert c.risk.pct_per_position == 0.018
         assert c.risk.max_open_positions == 50
+
+
+class TestStrategiesConfig:
+    """Session L multi-strategy registry config section."""
+
+    def test_default_is_single_donchian(self):
+        c = AppConfig()
+        assert len(c.strategies) == 1
+        assert c.strategies[0].id == "donchian"
+        assert c.strategies[0].enabled is True
+        assert c.strategies[0].pct_per_position is None  # -> global fallback
+
+    def test_strategy_config_defaults(self):
+        s = StrategyConfig(id="sma")
+        assert s.enabled is True
+        assert s.pct_per_position is None
+        assert s.params == {}
+
+    def test_pct_override_validation(self):
+        with pytest.raises(ValidationError):
+            StrategyConfig(id="sma", pct_per_position=0)
+        with pytest.raises(ValidationError):
+            StrategyConfig(id="sma", pct_per_position=1.5)
+
+    def test_parses_toml_strategies_block(self, tmp_path):
+        cfg = tmp_path / "config.toml"
+        cfg.write_text(
+            "[[strategies]]\n"
+            'id = "donchian"\n\n'
+            "[[strategies]]\n"
+            'id = "sma"\n'
+            "pct_per_position = 0.01\n"
+            "[strategies.params]\n"
+            "fast = 10\n"
+            "slow = 30\n"
+        )
+        c = load_config(str(cfg))
+        assert [s.id for s in c.strategies] == ["donchian", "sma"]
+        assert c.strategies[1].pct_per_position == 0.01
+        assert c.strategies[1].params == {"fast": 10, "slow": 30}
+
+    def test_absent_section_defaults_to_donchian(self, tmp_path):
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('[general]\nmode = "paper"\n')
+        c = load_config(str(cfg))
+        assert [s.id for s in c.strategies] == ["donchian"]
 
 
 class TestConfigEnvVar:

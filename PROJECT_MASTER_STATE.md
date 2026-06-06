@@ -4,11 +4,12 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-06-06 (Session K-plus — weekly report image — CLOSED)
+**Last updated:** 2026-06-06 (Session L — multi-strategy registry — CLOSED)
 **HEAD commit:** `5f66d1d` Roadmap: defer BI dashboard, add Session K-plus plot side-addon
-  (Session K-plus changes staged, not yet committed.)
-**Tests:** 321 passing, 0 failing (+8 this session: 6 plot, 2 notifier-image).
-  `test_report_plot` requires matplotlib (the `plot` extra) — skips cleanly when absent.
+  (Session K-plus + Session L changes in the working tree, not yet committed.)
+**Tests:** 376 passing, 0 failing (+55 this session: crossover/MACD strategies,
+  registry, config strategies section, multi-strategy submit, record attribution,
+  backtest selector). `test_report_plot` still requires matplotlib (`plot` extra).
 **Branch:** `main` — synced with `origin/main`.
 
 ---
@@ -88,13 +89,14 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **H-hygiene** — Tier-3 cleanup | `session-h-hygiene` branch | The four deferred Tier-3 items from the Saturday triage. **#1** curated `SP500_SYMBOLS` (16 delistings removed, `BRK.B`/`BF.B` → hyphen form) + `normalize_symbol` `.`→`-` helper + one-retry-with-backoff in `DataProvider.get_candles` + `data_unavailable` skip-summary counter on `SubmitResult`. **#2** `TZ=Asia/Jerusalem` committed to all three compose services + `tzdata`/`ENV TZ` in the `Dockerfile`. **#3** `load_config` falls back to `$VIBE_TRADE_CONFIG`; `ENV VIBE_TRADE_CONFIG=/config/config.toml` baked into the image so `docker compose run … config-check` finds the mounted config. **#4** `DataProvider.get_candles_batch` (bounded-concurrency `asyncio.gather`, 10 workers); submit's entries phase prefetches the whole universe in one batch — ~5 min → ~30 s. +15 net tests. |
 | **J** — Manual override CLI | `1594bf3` + `488c20b` | Two operator commands off the cron cycle. `close-position SYMBOL` market-SELLs the full IB position (`order_ref="manual"`, confirmation prompt + `--yes`, `OVERRIDE_CLIENT_ID=4`); `cancel-pending [SYMBOL]` lists working orders or cancels all of one ticker's. **No DB writes** — next record/reconcile persists fills (submit invariant). New `jobs/override.py` (`run_close_position`/`run_cancel_pending`), new `OpenOrder` broker model, broker gains `get_open_orders`/`cancel_orders_for_symbol`. `replay-fills` dropped — IB can't serve past-day fills and reconcile Bug #5 orphan back-fill already covers missed runs. **Live-paper verified:** caught a cross-client bug — `ib.openTrades()` and `cancelOrder` are client-scoped, so `cancel-pending` could not see/cancel a `submit` order. Fix: `get_open_orders`/`cancel_orders_for_symbol` call `reqAllOpenOrders` first (visibility), and `cancel-pending` connects as **submit's client_id (1)**, not 4, so `cancelOrder` is honoured (proven live). +17 tests. `close-position` not yet live-verified (needs market hours + a held position). |
 | **K** — Performance dashboard | `a985525` (CLI) + `0d99e9d` (outlier fix) | New `vibe-trade report --days N` CLI command. Read-only against `daily_pnl` + `portfolio_snapshot` + `trades` — no IB connection. New `src/vibe_trade/reports/` module (data + metrics + render split). Five output sections: header (with small-sample caveat), equity & risk (sharpe / drawdown with peak+trough dates / CAGR / best+worst day), current holdings (top/bottom 5 by unrealized P&L), trade activity (per-day entries, outlier-flagged), trade stats (n/a block until first SELL fires). Derives activity from `trades.entry_time` because the `daily_pnl.trades_opened` column is unreliable. Smoke-tested against the May 11–25 paper-run DB sample — caught a UX bug where outlier days with zero activity (e.g. 5/13 Gateway outage) didn't surface in the activity table; fixed by merging activity-dates with outlier-dates. Pure metrics layer designed to back a future web UI. +23 tests. |
+| **L** — Multi-strategy registry | working tree | Strategy registry V2. New `strategy/registry.py` (`STRATEGY_FACTORIES` + `build_strategy`/`build_strategies`). Three new strategies, all **regime/state** (BUY fast>slow, SELL fast<slow): SMA crossover (`"sma"` 20/50) + EMA crossover (`"ema"` 12/26) sharing `_crossover.py`'s base, + MACD crossover (`"macd"` 12/26/9). New config `[[strategies]]` list (`StrategyConfig`): list order = entry **priority**, optional per-strategy `pct_per_position` (else global fallback), `params` dict; default-when-absent = single donchian. Submit reworked: priority conflict resolution (first BUY wins, `order_ref=<id>`), **strategy-scoped exits** (owner map read from DB by the CLI, passed into the still-DB-free `run_submit`; orphan → highest-priority), per-strategy sizing, dynamic lookback sizing. Record reads `fill.execution.orderRef` → `strategy_name` (fallback for empty/legacy). Backtest gains `--strategy <id>`. config-check now lists + validates active strategies. RSI/Bollinger/ROC and any stop/target/trailing/time/intraday exits deferred (don't fit the stateless interface). +55 tests (376 total). |
 | **H** — Live paper week + Tier-1 fixes + Enhancement #1 | `2de11e1` | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement, fixed Saturday 2026-05-16: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. **Validated live Mon–Wed 2026-05-18..20:** Bug #1 confirmed (`Failed=0`), Bug #5 confirmed (`opened` == `placed`, zero drift), Bug #6 proven on the 5/20 Gateway outage (two `[CRITICAL]` alerts delivered where 5/13 was silent), force-trim deployed (never triggered — book never exceeded the 50 cap). 22 new tests. Full findings + validation log in `docs/SESSION_H_FINDINGS.md`. Tier-3 hygiene deferred. |
 
 ### Not started (per ROADMAP)
 
 - **Session K-plus monthly follow-up** — `report-monthly` (~30-day window) reusing `save_report_plot(period_label="Monthly")` + a monthly cron line; trivial.
-- **Session L** — Multi-strategy (Donchian + RSI + MA crossover via `Order.orderRef`)
-- **Session M** — Portfolio allocation rules (per-strategy caps)
+- **Session M** — Portfolio allocation rules (per-strategy caps + per-strategy daily_pnl/snapshot rollups, now that record attributes `strategy_name` from orderRef)
+- **More strategies (anytime)** — RSI / Bollinger / ROC slot into the registry the same way the crossovers did (new `examples/<name>.py` + `STRATEGY_FACTORIES` entry + `[[strategies]]` block). Stop/target/trailing/time-based/intraday exits need new machinery first (the `evaluate(symbol, candles)` interface is stateless).
 - **Phase 4** — Resilience hardening (late-fill edge case, reconnect logic, DB migrations, disaster recovery)
 - **Phase 5** — Live trading switch, multi-account, limit orders, shorts, universe expansion
 - **Phase 6 (planned)** — BI web project: point Metabase or Grafana at the SQLite DB for headless dashboards. Replaces the throwaway PNGs from Session K-plus. Trigger: after the bot has run headless for "some time" and accumulated enough data to make charts meaningful.
@@ -273,12 +275,25 @@ data dates). **Monthly is the trivial follow-up:**
 `save_report_plot(period_label="Monthly")` + a `report-monthly` command (~30-day
 window) + a monthly cron line.
 
-**Next: Session L — Multi-strategy** (see below).
+**Session L is CLOSED** (2026-06-06). Multi-strategy registry shipped:
+Donchian + SMA(20/50) + EMA(12/26) + MACD(12/26/9), all regime/state. Registry,
+`[[strategies]]` config (priority = list order), priority entry conflict
+resolution, strategy-scoped exits (DB owner map passed into a still-DB-free
+`run_submit`), per-strategy sizing, dynamic lookback, record orderRef
+attribution, `backtest --strategy`, config-check strategy validation. In the
+example config only `donchian` is enabled; flip `enabled=true` on sma/ema/macd
+to activate (and tune `params` / per-strategy `pct_per_position`). +55 tests.
 
-**Then Session L — Multi-strategy:** Strategy registry V2 (Donchian + RSI
-mean reversion + MA crossover) using `Order.orderRef = strategy_id`.
-Submit sets the tag; record reads `fill.execution.orderRef` to populate
-`strategy_name`. Position sizing gets a per-strategy override hook.
+**Validation done:** full suite 376 green; `config-check` parses + lists the
+strategies; backtest selector rejects unknown ids. **Not yet done:** standalone
+backtests of sma/ema/macd to vet their edge (needs network — run
+`backtest --start 2018-01-01 --end 2026-01-01 --top-n 100 --strategy sma`, then
+`ema`, `macd`); no live-paper run with a second strategy enabled yet.
+
+**Next candidates:** (a) backtest the three new strategies and decide which to
+enable; (b) **Session M** — portfolio allocation rules (per-strategy % caps) +
+per-strategy daily_pnl/snapshot rollups (record now persists `strategy_name`);
+(c) more strategies (RSI/Bollinger/ROC) drop into the registry trivially.
 
 **Long-term — BI web project (Phase 6):** Metabase or Grafana pointed at
 the SQLite DB. The user plans this *after* the bot has run headless for
@@ -319,12 +334,12 @@ metric definitions to mirror inside whichever BI tool wins.
 ### After the above (per ROADMAP)
 
 - **Session K-plus monthly:** `report-monthly` (~30-day window) — trivial reuse of `save_report_plot(period_label="Monthly")`
-- **Session L:** Multi-strategy registry (Donchian + RSI + MA via `orderRef`)
+- **Session M:** Portfolio allocation rules (per-strategy caps) + per-strategy P&L rollups
 - **Phase 6:** BI web project (Metabase/Grafana on SQLite) once data has accumulated
 
 ### Open questions deferred to later sessions
 
-- **Multi-strategy attribution** (Session L): when a second strategy lands, use `Order.orderRef = strategy_id` so record can read `fill.execution.orderRef`. (Note: `orderRef` plumbing already added Saturday for the force-trim tag — same channel.)
+- **Multi-strategy attribution** (Session L — DONE): submit tags each BUY with `order_ref=<strategy_id>`; record reads `fill.execution.orderRef` → `strategy_name`. Strategy-scoped exits resolve the owner from the DB. Per-strategy P&L rollups in daily_pnl/snapshot remain for Session M.
 - **Survivorship bias** (Phase 4): point-in-time SP500 membership instead of today's snapshot.
 - **Reconnect logic** during a job: current crash-alert wrapper notifies and exits; no in-process recovery from mid-run disconnect.
 
@@ -335,6 +350,7 @@ metric definitions to mirror inside whichever BI tool wins.
 - [`CLAUDE.md`](CLAUDE.md) — Claude Code project context (style, conventions, running commands)
 - [`PROJECT_MAP.md`](PROJECT_MAP.md) — module-level reference + Mermaid diagrams
 - [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) — original V2 plan + implementation deltas
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — day-to-day operations: cadence, strategy pool, config, troubleshooting
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — Sessions F → onward
 - [`tests/TEST_REGISTRY.csv`](tests/TEST_REGISTRY.csv) — every test, one row each
 

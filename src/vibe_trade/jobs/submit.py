@@ -12,9 +12,12 @@ Flow (locked by docs/ARCHITECTURE_V2.md and project_v2_next_sessions.md memory):
 5. Disconnect.
 
 Invariants:
-- NO DB writes (V2 separation: record at 16:25 does the DB part).
+- NO DB writes (V2 separation: record at 16:25 does the DB part). The CLI reads
+  the DB to build the symbol->owner map and passes it in; this function stays
+  DB-free.
 - NO trailing stops, no risk-per-share math — sizing is purely % of net_liq.
-- Single strategy for first iteration (Donchian, locked).
+- Multiple strategies, priority-ordered (Session L). Entries: first strategy to
+  BUY a ticker wins. Exits: strategy-scoped (only the owner evaluates).
 - Held tickers are skipped in entries phase (no averaging).
 
 The function is broker-agnostic for testability — pass any object that
@@ -25,6 +28,7 @@ real-IB connection lifecycle around `run_submit`.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 from vibe_trade.broker.base import BaseBroker
@@ -33,10 +37,10 @@ from vibe_trade.data.provider import DataProvider
 from vibe_trade.risk.manager import RiskManager
 from vibe_trade.risk.position_sizer import (
     DEFAULT_MAX_POSITIONS,
-    DEFAULT_PCT_PER_POSITION,
     size_position,
 )
-from vibe_trade.strategy.base import BaseStrategy, SignalType
+from vibe_trade.strategy.base import SignalType
+from vibe_trade.strategy.registry import BuiltStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -88,27 +92,56 @@ class SubmitResult:
 
     data_unavailable: int = 0  # universe tickers yfinance returned no bars for
 
+    # Per-strategy attribution (Session L): {strategy_id: count} for placed orders.
+    entries_placed_by_strategy: dict[str, int] = field(default_factory=dict)
+    exits_placed_by_strategy: dict[str, int] = field(default_factory=dict)
+
     errors: list[str] = field(default_factory=list)
+
+
+def _required_lookback_days(strategies: list[BuiltStrategy]) -> int:
+    """Calendar-day lookback covering the largest strategy `required_candles`.
+
+    `required_candles` is in trading bars; ~5 trading days per 7 calendar days,
+    so multiply by 1.6 and add a buffer. Never below DEFAULT_LOOKBACK_DAYS so
+    short-window strategies keep their historical margin.
+    """
+    max_required = max(s.strategy.required_candles for s in strategies)
+    return max(DEFAULT_LOOKBACK_DAYS, math.ceil(max_required * 1.6) + 15)
 
 
 async def run_submit(
     *,
     broker: BaseBroker,
-    strategy: BaseStrategy,
+    strategies: list[BuiltStrategy],
     data_provider: DataProvider,
     risk_manager: RiskManager,
     universe: list[str],
-    pct_per_position: float = DEFAULT_PCT_PER_POSITION,
+    position_strategies: dict[str, str] | None = None,
     max_positions: int = DEFAULT_MAX_POSITIONS,
-    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    lookback_days: int | None = None,
 ) -> SubmitResult:
     """Execute one submit cycle. Caller manages the broker connection.
+
+    `strategies` is the priority-ordered list of active strategies (highest
+    priority first). `position_strategies` maps held symbol -> owning strategy id
+    (supplied by the CLI from the DB so this function stays DB-free); a position
+    whose owner is missing or no longer active is exited by the highest-priority
+    strategy (`strategies[0]`).
 
     Returns a SubmitResult counting what happened. Per-symbol exceptions are
     logged and recorded but never abort the run -- one bad ticker shouldn't
     take down the whole submit.
     """
+    if not strategies:
+        raise ValueError("run_submit requires at least one strategy")
+
     result = SubmitResult()
+    owners = position_strategies or {}
+    by_name = {b.strategy.name: b for b in strategies}
+    default_built = strategies[0]
+    if lookback_days is None:
+        lookback_days = _required_lookback_days(strategies)
 
     account = await broker.get_account_summary()
     positions = await broker.get_positions()
@@ -120,15 +153,21 @@ async def run_submit(
     result.held_count = len(longs)
 
     logger.info(
-        "submit start: %d held, $%.2f net_liq, universe=%d, strategy=%s",
-        len(longs), account.net_liquidation, len(universe), strategy.name,
+        "submit start: %d held, $%.2f net_liq, universe=%d, strategies=%s",
+        len(longs), account.net_liquidation, len(universe),
+        [b.strategy.name for b in strategies],
     )
 
     # ----------------------------------------------------------------- exits
-    donchian_exit_symbols: set[str] = set()
+    # Strategy-scoped: each position is evaluated only by the strategy that
+    # opened it (owner). Unknown/orphan owners fall back to the highest-priority
+    # strategy.
+    strategy_exit_symbols: set[str] = set()
     for pos in longs:
         result.exits_evaluated += 1
         try:
+            built = by_name.get(owners.get(pos.symbol), default_built)
+            strategy = built.strategy
             candles = await data_provider.get_candles(
                 pos.symbol, timeframe="1d", lookback_days=lookback_days
             )
@@ -144,7 +183,10 @@ async def run_submit(
                 continue
 
             result.exits_signaled += 1
-            logger.info("SELL signal: %s (qty=%d)", pos.symbol, pos.quantity)
+            logger.info(
+                "SELL signal: %s (qty=%d, strategy=%s)",
+                pos.symbol, pos.quantity, strategy.name,
+            )
 
             order_result = await broker.place_market_order(
                 OrderRequest(
@@ -154,7 +196,10 @@ async def run_submit(
             )
             if order_result.status in PLACEMENT_SUCCESS_STATUSES:
                 result.exits_placed += 1
-                donchian_exit_symbols.add(pos.symbol)
+                result.exits_placed_by_strategy[strategy.name] = (
+                    result.exits_placed_by_strategy.get(strategy.name, 0) + 1
+                )
+                strategy_exit_symbols.add(pos.symbol)
             else:
                 result.exits_failed += 1
                 result.errors.append(
@@ -168,18 +213,18 @@ async def run_submit(
             result.errors.append(err)
 
     # ------------------------------------------------------------ force-trim
-    # Enhancement #1: if we still hold more than `max_positions` after Donchian
+    # Enhancement #1: if we still hold more than `max_positions` after strategy
     # exits, sell the worst-performing (lowest unrealized $ P&L) until we're
     # back at the cap. Trim orders are tagged orderRef="trim" so record /
     # analytics can tell them apart from strategy exits.
     trim_symbols = risk_manager.select_force_trim_candidates(
-        longs, max_positions, already_exiting=donchian_exit_symbols,
+        longs, max_positions, already_exiting=strategy_exit_symbols,
     )
     result.trim_signaled = len(trim_symbols)
     if trim_symbols:
         logger.info(
             "FORCE TRIM: held=%d max=%d -> trimming %d position(s): %s",
-            len(longs) - len(donchian_exit_symbols), max_positions,
+            len(longs) - len(strategy_exit_symbols), max_positions,
             len(trim_symbols), trim_symbols,
         )
         # Map symbol -> Position so we know the quantity to sell.
@@ -234,14 +279,21 @@ async def run_submit(
             if candles.empty:
                 result.data_unavailable += 1
                 continue
-            if len(candles) < strategy.required_candles:
-                continue
 
-            sig = strategy.evaluate(symbol, candles)
-            if sig.signal != SignalType.BUY:
+            # Priority conflict resolution: the first (highest-priority) strategy
+            # that returns BUY claims the ticker. One order per ticker.
+            chosen: BuiltStrategy | None = None
+            for built in strategies:
+                if len(candles) < built.strategy.required_candles:
+                    continue
+                if built.strategy.evaluate(symbol, candles).signal == SignalType.BUY:
+                    chosen = built
+                    break
+            if chosen is None:
                 continue
 
             result.entries_signaled += 1
+            strat_id = chosen.strategy.name
 
             price = float(candles["close"].iloc[-1])
             current_count = len(longs) + placed_this_run
@@ -249,23 +301,31 @@ async def run_submit(
                 net_liquidation=account.net_liquidation,
                 price=price,
                 current_position_count=current_count,
-                pct_per_position=pct_per_position,
+                pct_per_position=chosen.pct_per_position,
                 max_positions=max_positions,
             )
             if shares <= 0:
                 result.entries_skipped_sizing += 1
                 logger.info(
-                    "BUY %s skipped by sizer: price=$%.2f count=%d",
-                    symbol, price, current_count,
+                    "BUY %s (%s) skipped by sizer: price=$%.2f count=%d",
+                    symbol, strat_id, price, current_count,
                 )
                 continue
 
-            logger.info("BUY signal: %s shares=%d price=$%.2f", symbol, shares, price)
+            logger.info(
+                "BUY signal: %s shares=%d price=$%.2f strategy=%s",
+                symbol, shares, price, strat_id,
+            )
             order_result = await broker.place_market_order(
-                OrderRequest(symbol=symbol, side="BUY", quantity=shares)
+                OrderRequest(
+                    symbol=symbol, side="BUY", quantity=shares, order_ref=strat_id,
+                )
             )
             if order_result.status in PLACEMENT_SUCCESS_STATUSES:
                 result.entries_placed += 1
+                result.entries_placed_by_strategy[strat_id] = (
+                    result.entries_placed_by_strategy.get(strat_id, 0) + 1
+                )
                 placed_this_run += 1
                 held_symbols.add(symbol)
             else:

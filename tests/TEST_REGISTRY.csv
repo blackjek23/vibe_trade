@@ -320,3 +320,58 @@ test_report_plot.py,TestReportPlot,test_single_point_window_renders_without_cras
 test_report_plot.py,TestReportPlot,test_creates_output_dir_if_missing,save_report_plot mkdirs a missing nested output dir
 test_notify_integration.py,unit,test_telegram_notify_report_image_no_raise_when_unconfigured,Unconfigured Telegram bot no-ops on notify_report_image instead of raising
 test_notify_integration.py,unit,test_console_notify_report_image_logs_path,ConsoleNotifier.notify_report_image logs the image path
+test_crossover.py,TestSMA,test_name,SMA crossover strategy reports name 'sma'
+test_crossover.py,TestSMA,test_required_candles_is_slow,SMA required_candles equals slow period
+test_crossover.py,TestSMA,test_uptrend_is_buy,Rising trend makes fast SMA > slow SMA -> BUY
+test_crossover.py,TestSMA,test_downtrend_is_sell,Falling trend makes fast SMA < slow SMA -> SELL
+test_crossover.py,TestSMA,test_flat_is_hold_on_tie,Flat series ties the SMAs -> HOLD
+test_crossover.py,TestSMA,test_insufficient_data_is_hold,Fewer than slow bars -> HOLD with insufficient-data reason
+test_crossover.py,TestSMA,test_custom_periods,Custom fast/slow periods applied and reflected in metadata
+test_crossover.py,TestEMA,test_name,EMA crossover strategy reports name 'ema'
+test_crossover.py,TestEMA,test_required_candles_is_twice_slow,EMA required_candles equals 2x slow for warmup
+test_crossover.py,TestEMA,test_uptrend_is_buy,Rising trend makes fast EMA > slow EMA -> BUY
+test_crossover.py,TestEMA,test_downtrend_is_sell,Falling trend makes fast EMA < slow EMA -> SELL
+test_crossover.py,TestEMA,test_flat_is_hold_on_tie,Flat series ties the EMAs -> HOLD
+test_crossover.py,TestEMA,test_insufficient_data_is_hold,Fewer than 2x slow bars -> HOLD
+test_crossover.py,TestValidation,test_fast_must_be_less_than_slow,Reject fast >= slow at construction
+test_crossover.py,TestValidation,test_periods_must_be_positive,Reject non-positive periods
+test_crossover.py,TestRealisticScenario,test_runs_on_sample_fixture,SMA and EMA run cleanly on the shared 60-bar fixture
+test_macd.py,TestNameAndRequired,test_name,MACD strategy reports name 'macd'
+test_macd.py,TestNameAndRequired,test_required_candles,MACD required_candles equals 2x slow + signal
+test_macd.py,TestNameAndRequired,test_period_validation,Reject fast >= slow and non-positive signal
+test_macd.py,TestSignals,test_uptrend_macd_above_signal_is_buy,Uptrend puts MACD above signal -> BUY
+test_macd.py,TestSignals,test_downtrend_macd_below_signal_is_sell,Downtrend puts MACD below signal -> SELL
+test_macd.py,TestSignals,test_flat_series_is_hold,Flat series gives MACD=signal=0 -> HOLD
+test_macd.py,TestInsufficientData,test_too_few_bars_is_hold,Fewer than required bars -> HOLD with reason
+test_registry.py,TestBuildStrategy,test_all_known_ids_build,build_strategy constructs donchian/sma/ema/macd instances
+test_registry.py,TestBuildStrategy,test_params_applied,build_strategy applies params to the strategy
+test_registry.py,TestBuildStrategy,test_donchian_period_param,build_strategy passes donchian period param
+test_registry.py,TestBuildStrategy,test_unknown_id_raises,Unknown id raises ValueError
+test_registry.py,TestBuildStrategy,test_registry_covers_all_session_l_strategies,Registry contains all Session L strategy ids
+test_registry.py,TestBuildStrategies,test_default_donchian_only,Single donchian config yields one BuiltStrategy at global pct
+test_registry.py,TestBuildStrategies,test_priority_order_preserved,build_strategies preserves config list order as priority
+test_registry.py,TestBuildStrategies,test_disabled_filtered_out,Disabled strategies are excluded
+test_registry.py,TestBuildStrategies,test_pct_override_vs_fallback,Per-strategy pct override else global fallback
+test_registry.py,TestBuildStrategies,test_unknown_id_raises,Unknown id in list raises ValueError
+test_config.py,TestStrategiesConfig,test_default_is_single_donchian,Default strategies list is a single enabled donchian
+test_config.py,TestStrategiesConfig,test_strategy_config_defaults,StrategyConfig defaults: enabled true pct None params empty
+test_config.py,TestStrategiesConfig,test_pct_override_validation,Reject pct override of 0 or >1
+test_config.py,TestStrategiesConfig,test_parses_toml_strategies_block,Parse [[strategies]] block with params and pct override
+test_config.py,TestStrategiesConfig,test_absent_section_defaults_to_donchian,Absent section defaults to donchian
+test_submit.py,TestMultiStrategyEntries,test_priority_first_buy_wins,Highest-priority strategy claims a contested BUY with its order_ref
+test_submit.py,TestMultiStrategyEntries,test_lower_priority_wins_when_higher_holds,Lower-priority strategy buys when higher one HOLDs
+test_submit.py,TestMultiStrategyEntries,test_buy_order_ref_set_for_real_donchian,Real Donchian BUY carries order_ref=donchian
+test_submit.py,TestMultiStrategyEntries,test_per_strategy_pct_override_sizes_differently,Chosen strategy's pct override drives share sizing
+test_submit.py,TestMultiStrategyExits,test_only_owner_strategy_evaluates,Only the owning strategy evaluates a held position
+test_submit.py,TestMultiStrategyExits,test_owner_strategy_sell_places_tagged_exit,Owner SELL places exit tagged with owner id
+test_submit.py,TestMultiStrategyExits,test_orphan_position_uses_highest_priority,Orphan position exited by highest-priority strategy
+test_submit.py,TestMultiStrategyExits,test_unknown_owner_falls_back_to_default,Unknown owner id falls back to strategies[0]
+test_submit.py,TestLookbackSizing,test_short_strategy_keeps_floor,Short strategy keeps the 60-day lookback floor
+test_submit.py,TestLookbackSizing,test_long_strategy_expands_window,SMA(50) expands lookback to cover required candles
+test_submit.py,TestLookbackSizing,test_empty_strategies_rejected,run_submit rejects an empty strategies list
+test_record.py,TestStrategyAttribution,test_order_ref_sets_strategy_name,BUY fill orderRef sets the trade strategy_name
+test_record.py,TestStrategyAttribution,test_order_ref_overrides_fallback_arg,Per-fill orderRef overrides the fallback strategy_name arg
+test_record.py,TestStrategyAttribution,test_empty_order_ref_uses_fallback,Empty orderRef falls back to default strategy_name
+test_record.py,TestStrategyAttribution,test_distinct_strategies_attributed_per_fill,Each fill attributed to its own strategy id
+test_backtest_cli.py,unit,test_backtest_rejects_unknown_strategy,backtest --strategy rejects an unknown id before fetching
+test_backtest_cli.py,unit,test_backtest_accepts_known_strategy_ids,Registry knows every Session L strategy id the selector offers

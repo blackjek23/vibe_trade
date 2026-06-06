@@ -29,15 +29,49 @@ market_close = "16:00"
 timezone = "US/Eastern"
 trading_days = ["mon", "tue", "wed", "thu", "fri"]
 
-# V2 first iteration: single hardcoded strategy (Donchian, N=20). When a
-# second strategy lands, restore a [strategy] section here.
-
 [risk]
 # V2 sizing: each BUY = pct_per_position × net_liquidation, floor to whole shares.
 # Skip signal if 1 share already exceeds the target. Skip BUY phase entirely
 # at max_open_positions (exits still run).
-pct_per_position = 0.018          # 1.8% of net_liq per BUY
+pct_per_position = 0.018          # 1.8% of net_liq per BUY (global fallback)
 max_open_positions = 50
+
+# Multi-strategy registry (Session L). List order = priority: when more than one
+# strategy signals BUY on the same un-held ticker, the first listed wins. Exits
+# are strategy-scoped (a position is only exited by the strategy that opened it).
+# Omit this whole section to run Donchian alone (the default).
+#
+# Per-strategy `pct_per_position` overrides the global risk value above; omit it
+# to use the global. `params` are the strategy's tunable knobs. The crossover
+# strategies use regime semantics: BUY when fast > slow, SELL when fast < slow.
+
+[[strategies]]
+id = "donchian"
+enabled = true
+[strategies.params]
+period = 20
+
+[[strategies]]
+id = "sma"                        # SMA crossover, fast vs slow
+enabled = false
+[strategies.params]
+fast = 20
+slow = 50
+
+[[strategies]]
+id = "ema"                        # EMA crossover, fast vs slow
+enabled = false
+[strategies.params]
+fast = 12
+slow = 26
+
+[[strategies]]
+id = "macd"                       # MACD line vs signal line
+enabled = false
+[strategies.params]
+fast = 12
+slow = 26
+signal = 9
 
 [telegram]
 enabled = false

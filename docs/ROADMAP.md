@@ -72,13 +72,30 @@ This document maps what comes next. Sessions are numbered F+ to continue the A�
 
 ## Phase 3 — Multi-strategy (deferred until after live paper validation)
 
-### Session L — Strategy registry V2
-- Restore registry pattern with new shape (Donchian + RSI mean-reversion + MA crossover)
-- Each strategy declares `strategy_id` (e.g. `"don"`, `"rsi"`, `"ma"`)
-- Submit places orders with `Order.orderRef = strategy_id`
-  (designed in memory: project_v2_next_sessions.md → "strategy_name handoff")
-- Record reads `fill.execution.orderRef` to set `strategy_name` correctly
-- Position sizing: per-strategy `pct_per_position` overrides, or one global
+### Session L — Strategy registry V2 ✅ Done (2026-06-06)
+- New `src/vibe_trade/strategy/registry.py`: `STRATEGY_FACTORIES` (id → factory)
+  + `build_strategy(id, params)` + `build_strategies(configs, default_pct)`.
+- Three new strategies, all **regime/state** semantics (BUY when fast > slow,
+  SELL when fast < slow), tunable via config `params`:
+  Donchian (`"donchian"`, existing) + SMA crossover (`"sma"`, 20/50) +
+  EMA crossover (`"ema"`, 12/26) + MACD crossover (`"macd"`, 12/26/9).
+  SMA/EMA share `_crossover.py`'s `_CrossoverStrategy` base.
+- New config `[[strategies]]` list (`config.StrategyConfig`): order = entry
+  **priority**; optional per-strategy `pct_per_position` (else global fallback);
+  `params` dict. Default-when-absent = single donchian.
+- Submit reworked: priority conflict resolution (first strategy to BUY a ticker
+  wins, tagged `order_ref=<id>`), **strategy-scoped exits** (each position
+  exited only by its owner — symbol→owner map read from DB by the CLI and passed
+  in so `run_submit` stays DB-free), per-strategy sizing, and dynamic lookback
+  sizing (SMA(50)/EMA/MACD need > the old 60-day window).
+- Record reads `fill.execution.orderRef` → `strategy_name` (fallback default for
+  empty/legacy refs). Reconcile unchanged.
+- Backtest gains `--strategy <id>` to vet each strategy standalone.
+- Orphan/unknown-owner positions default to the highest-priority strategy.
+- **Deferred** (don't fit the stateless `evaluate(symbol, candles)` interface):
+  RSI / Bollinger / ROC (buildable later); stop-loss / take-profit / ATR
+  trailing / time-based exits (need entry price or per-position state); intraday.
+- +55 tests (376 total).
 
 ### Session M — Portfolio allocation rules
 - Max % per strategy (e.g. don ≤ 60%, rsi ≤ 30%, ma ≤ 20%)

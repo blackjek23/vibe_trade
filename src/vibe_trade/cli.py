@@ -235,9 +235,11 @@ async def _run_submit_cli(config) -> None:
     from vibe_trade.broker.ib_broker import IBBroker
     from vibe_trade.data.provider import DataProvider
     from vibe_trade.data.universe import load_universe
+    from vibe_trade.db.engine import init_db as _init
+    from vibe_trade.db.repository import TradeRepository
     from vibe_trade.jobs.submit import SUBMIT_CLIENT_ID, run_submit
     from vibe_trade.risk.manager import RiskManager
-    from vibe_trade.strategy.examples.donchian import DonchianStrategy
+    from vibe_trade.strategy.registry import build_strategies
 
     broker_config = config.broker.model_copy()
     broker_config.client_id = SUBMIT_CLIENT_ID
@@ -246,9 +248,23 @@ async def _run_submit_cli(config) -> None:
     universe = load_universe(config.universe)
     notifier = _get_notifier(config)
 
+    # Priority-ordered active strategies (Session L).
+    strategies = build_strategies(config.strategies, config.risk.pct_per_position)
+
+    # Read-only DB lookup: map each held symbol to the strategy that opened it,
+    # so exits stay strategy-scoped. Submit itself writes nothing (V2 invariant).
+    session_factory = _init(config.general.db_path)
+    session = session_factory()
+    try:
+        open_trades = TradeRepository(session).get_open_trades()
+        position_strategies = {t.symbol: t.strategy_name for t in open_trades}
+    finally:
+        session.close()
+
     console.print(
         f"[bold]Submit[/bold] mode={config.general.mode} "
-        f"client_id={SUBMIT_CLIENT_ID} universe_size={len(universe)}"
+        f"client_id={SUBMIT_CLIENT_ID} universe_size={len(universe)} "
+        f"strategies={[b.strategy.name for b in strategies]}"
     )
     console.print(
         f"Connecting to {broker_config.host}:"
@@ -259,11 +275,11 @@ async def _run_submit_cli(config) -> None:
     try:
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=strategies,
             data_provider=DataProvider(),
             risk_manager=RiskManager(config.risk),
             universe=universe,
-            pct_per_position=config.risk.pct_per_position,
+            position_strategies=position_strategies,
             max_positions=config.risk.max_open_positions,
         )
     finally:
@@ -551,6 +567,10 @@ def backtest(
     pct: float = typer.Option(0.04, "--pct", help="Per-position size as fraction of net_liq"),
     max_positions: int = typer.Option(25, "--max-positions", help="Position cap"),
     equity: float = typer.Option(100_000.0, "--equity", help="Starting equity"),
+    strategy: str = typer.Option(
+        "donchian", "--strategy",
+        help="Strategy id to backtest (donchian, sma, ema, macd)",
+    ),
     output_dir: Optional[str] = typer.Option(
         None, "--output", help="Output directory (default: backtests/<timestamp>/)"
     ),
@@ -559,11 +579,11 @@ def backtest(
     ),
     config_path: Optional[str] = typer.Option(None, "--config", "-c"),
 ) -> None:
-    """Backtest the locked Donchian strategy against S&P 500 history.
+    """Backtest a single strategy against S&P 500 history.
 
-    Default settings differ from production: top-100 / 4% / 25-cap (vs
-    production's full universe / 1.8% / 50-cap) for cleaner read-out per
-    docs/ROADMAP.md Session I.
+    Select the strategy with --strategy (default donchian). Default settings
+    differ from production: top-100 / 4% / 25-cap (vs production's full universe
+    / 1.8% / 50-cap) for cleaner read-out per docs/ROADMAP.md Session I.
     """
     config = load_config(config_path)
     _setup_logging(config.general.log_level)
@@ -574,6 +594,7 @@ def backtest(
         pct=pct,
         max_positions=max_positions,
         equity=equity,
+        strategy_id=strategy,
         output_dir=output_dir,
         force_refresh=force_refresh,
     )
@@ -581,7 +602,7 @@ def backtest(
 
 def _run_backtest_cli(
     *, start, end, top_n: int, pct: float, max_positions: int,
-    equity: float, output_dir: str | None, force_refresh: bool,
+    equity: float, strategy_id: str, output_dir: str | None, force_refresh: bool,
 ) -> None:
     import json
     from dataclasses import asdict
@@ -591,12 +612,15 @@ def _run_backtest_cli(
     from vibe_trade.backtest.engine import run_backtest
     from vibe_trade.backtest.metrics import compute_metrics
     from vibe_trade.data.sp100_top import LAST_UPDATED, SP100_TOP_BY_MCAP
-    from vibe_trade.strategy.examples.donchian import DonchianStrategy
+    from vibe_trade.strategy.registry import build_strategy
+
+    strategy = build_strategy(strategy_id)
 
     # ---------------------------------------------------------- universe
     console.print(
-        f"[bold]Backtest[/bold] {start} -> {end}  top_n={top_n}  "
-        f"pct={pct:.3f}  max_pos={max_positions}  equity=${equity:,.0f}"
+        f"[bold]Backtest[/bold] {start} -> {end}  strategy={strategy.name}  "
+        f"top_n={top_n}  pct={pct:.3f}  max_pos={max_positions}  "
+        f"equity=${equity:,.0f}"
     )
     if not SP100_TOP_BY_MCAP:
         console.print(
@@ -618,7 +642,7 @@ def _run_backtest_cli(
     # ---------------------------------------------------------- run
     console.print("Running backtest...")
     result = run_backtest(
-        strategy=DonchianStrategy(),
+        strategy=strategy,
         universe=list(paths.keys()),
         start=start, end=end,
         starting_equity=equity,
@@ -665,6 +689,7 @@ def _run_backtest_cli(
         "params": {
             "start": start.isoformat(),
             "end": end.isoformat(),
+            "strategy": strategy.name,
             "top_n": top_n,
             "pct_per_position": pct,
             "max_positions": max_positions,
@@ -1013,12 +1038,21 @@ def config_check(
 ) -> None:
     """Validate the config file."""
     try:
+        from vibe_trade.strategy.registry import build_strategies
+
         config = load_config(config_path)
+        # Resolve the registry so an unknown/typo'd strategy id is caught here,
+        # not mid-cron. Order shown is the entry-priority order.
+        built = build_strategies(config.strategies, config.risk.pct_per_position)
+        active = ", ".join(
+            f"{b.strategy.name}({b.pct_per_position:.3%})" for b in built
+        )
         console.print("[green]Config is valid[/green]")
         console.print(f"  Mode: {config.general.mode}")
         console.print(f"  Broker: IB @ {config.broker.host}:{config.broker.get_port(config.general.mode)}")
         console.print(f"  Universe: {config.universe.source}")
         console.print(f"  Max positions: {config.risk.max_open_positions}")
+        console.print(f"  Strategies (priority): {active or '(none enabled)'}")
         console.print(f"  Telegram: {'enabled' if config.telegram.enabled else 'disabled'}")
     except Exception as e:
         console.print(f"[red]Config error: {e}[/red]")

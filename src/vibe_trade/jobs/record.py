@@ -12,8 +12,11 @@ Flow:
      a matching OPEN trade by symbol and call `mark_pending_close(exit_perm_id=...)`
 
 Invariants:
-- `strategy_name` is a constant ("donchian") for V2 first iteration. Future
-  multi-strategy support will read `Order.orderRef` from the fill.
+- `strategy_name` is read from the fill's `execution.orderRef` (Session L
+  multi-strategy attribution). submit tags each BUY with its strategy id; record
+  stamps it onto the trade row. Falls back to the `strategy_name` arg (default
+  "donchian") when the orderRef is empty (legacy/pre-L fills). The "trim" tag is
+  a SELL ref and never reaches the BUY-insert path.
 - `requested_quantity` is set to total filled shares observed at record time.
   For market orders on liquid S&P 500 names this equals the original ask
   (partial fills essentially impossible). Edge case documented; revisit if
@@ -54,6 +57,10 @@ async def run_record(
 ) -> RecordResult:
     """Execute one record cycle. Caller manages broker connection.
 
+    `strategy_name` is the fallback strategy id used only when a BUY fill has an
+    empty `execution.orderRef` (legacy/pre-Session-L fills). Normally the strategy
+    is read per-fill from the orderRef submit stamped on the order.
+
     `now` is the timestamp written to `submitted_at` / `exit_submitted_at`
     rows. Defaults to `datetime.now()` -- pass an explicit value in tests
     for deterministic comparisons.
@@ -91,9 +98,13 @@ async def run_record(
                         "skip BUY %s perm_id=%d already in DB", symbol, perm_id,
                     )
                     continue
+                # Attribute the trade to the strategy that placed it (orderRef),
+                # falling back to the default for empty/legacy refs.
+                order_ref = (getattr(group[0].execution, "orderRef", "") or "").strip()
+                trade_strategy = order_ref or strategy_name
                 trade = repo.create_submitted_buy(
                     symbol=symbol,
-                    strategy_name=strategy_name,
+                    strategy_name=trade_strategy,
                     requested_quantity=total_shares,
                     ib_order_id=order_id,
                     submitted_at=timestamp,
@@ -101,8 +112,8 @@ async def run_record(
                 )
                 result.buys_inserted += 1
                 logger.info(
-                    "BUY %s perm_id=%d shares=%d -> trade_id=%d SUBMITTED",
-                    symbol, perm_id, total_shares, trade.id,
+                    "BUY %s perm_id=%d shares=%d strategy=%s -> trade_id=%d SUBMITTED",
+                    symbol, perm_id, total_shares, trade_strategy, trade.id,
                 )
 
             elif ib_side == "SLD":

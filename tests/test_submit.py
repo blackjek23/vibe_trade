@@ -26,7 +26,16 @@ from vibe_trade.config import RiskConfig
 from vibe_trade.data.provider import DataProvider
 from vibe_trade.jobs.submit import run_submit
 from vibe_trade.risk.manager import RiskManager
+from vibe_trade.strategy.base import BaseStrategy, SignalResult, SignalType
 from vibe_trade.strategy.examples.donchian import DonchianStrategy
+from vibe_trade.strategy.registry import BuiltStrategy
+
+
+def _strats(strategy=None, pct: float = 0.018) -> list[BuiltStrategy]:
+    """Wrap one strategy (default Donchian) as the priority-ordered list the
+    new run_submit expects. Keeps the single-strategy tests concise.
+    """
+    return [BuiltStrategy(strategy=strategy or DonchianStrategy(), pct_per_position=pct)]
 
 
 # ----------------------------------------------------------------- fixtures
@@ -128,7 +137,7 @@ class TestEmpty:
         broker = MockBroker(_account(), [])
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=MockDataProvider(),
             risk_manager=_risk_mgr(),
             universe=[],
@@ -146,7 +155,7 @@ class TestExitsPhase:
         dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})  # SELL signal
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=[],  # only exit
@@ -165,7 +174,7 @@ class TestExitsPhase:
         dp = MockDataProvider({"AAPL": _candles_for(close=99.5)})  # HOLD
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=[],
@@ -182,7 +191,7 @@ class TestExitsPhase:
         dp = MockDataProvider({"AAPL": _candles_for(close=101.0)})  # BUY
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["AAPL"],  # in universe but already held
@@ -197,7 +206,7 @@ class TestExitsPhase:
         dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=[],
@@ -213,7 +222,7 @@ class TestEntriesPhase:
         dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["GOOG"],
@@ -234,7 +243,7 @@ class TestEntriesPhase:
         dp = MockDataProvider({"GOOG": _candles_for(close=98.0)})
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["GOOG"],
@@ -253,7 +262,7 @@ class TestEntriesPhase:
         )
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["AAPL", "GOOG"],
@@ -270,7 +279,7 @@ class TestEntriesPhase:
         dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["GOOG"],
@@ -290,7 +299,7 @@ class TestPositionCap:
         dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(max_positions=50),
             universe=["GOOG"],
@@ -315,7 +324,7 @@ class TestPositionCap:
         )
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(max_positions=50),
             universe=["GOOG", "META", "NVDA"],
@@ -335,7 +344,7 @@ class TestPerSymbolErrors:
         dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})  # META has no data
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["META", "GOOG"],
@@ -357,7 +366,7 @@ class TestPerSymbolErrors:
         dp = FlakyProvider({"GOOG": _candles_for(close=101.0)})
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["BAD", "GOOG"],
@@ -374,7 +383,7 @@ class TestPerSymbolErrors:
         dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})  # META, NVDA empty
         result = await run_submit(
             broker=broker,
-            strategy=DonchianStrategy(),
+            strategies=_strats(),
             data_provider=dp,
             risk_manager=_risk_mgr(),
             universe=["META", "GOOG", "NVDA"],
@@ -402,7 +411,7 @@ class TestPlacementStatuses:
         dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
 
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(),
             universe=["GOOG"],
         )
@@ -423,7 +432,7 @@ class TestPlacementStatuses:
         dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})  # SELL
 
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(),
             universe=[],
         )
@@ -447,7 +456,7 @@ class TestPlacementStatuses:
         dp = MockDataProvider({s: _candles_for(close=101.0) for s in symbols})
 
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(),
             universe=symbols,
         )
@@ -487,7 +496,7 @@ class TestForceTrim:
         # Empty universe + HOLD candles for held: no Donchian exits, no entries.
         dp = MockDataProvider()  # no candles -> strategy short-circuits
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
             universe=[],
         )
@@ -508,7 +517,7 @@ class TestForceTrim:
         broker = MockBroker(_account(), positions)
         dp = MockDataProvider()
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
             universe=[],
         )
@@ -539,7 +548,7 @@ class TestForceTrim:
         broker = MockBroker(_account(), positions)
         dp = MockDataProvider(candle_map)
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
             universe=[],
         )
@@ -575,7 +584,7 @@ class TestForceTrim:
         broker = MockBroker(_account(), positions)
         dp = MockDataProvider(candle_map)
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
             universe=[],
         )
@@ -602,7 +611,7 @@ class TestForceTrim:
         broker = MockBroker(_account(), positions)
         dp = MockDataProvider()
         result = await run_submit(
-            broker=broker, strategy=DonchianStrategy(),
+            broker=broker, strategies=_strats(),
             data_provider=dp, risk_manager=_risk_mgr(max_positions=50),
             universe=[],
         )
@@ -611,6 +620,187 @@ class TestForceTrim:
         assert len(trim_orders) == 1
         assert trim_orders[0].symbol == "LOSS00"
         assert trim_orders[0].side == "SELL"
+
+
+class _Fake(BaseStrategy):
+    """Strategy with a controllable signal, for testing orchestration logic."""
+
+    def __init__(self, name, signal=SignalType.HOLD, signal_map=None, required=1):
+        self._name = name
+        self._sig = signal
+        self._map = signal_map or {}
+        self._req = required
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def required_candles(self):
+        return self._req
+
+    def evaluate(self, symbol, candles):
+        return SignalResult(
+            signal=self._map.get(symbol, self._sig),
+            symbol=symbol,
+            strategy_name=self._name,
+        )
+
+
+def _built(name, signal=SignalType.HOLD, pct=0.018, signal_map=None):
+    return BuiltStrategy(
+        strategy=_Fake(name, signal=signal, signal_map=signal_map),
+        pct_per_position=pct,
+    )
+
+
+class TestMultiStrategyEntries:
+    async def test_priority_first_buy_wins(self):
+        # Two strategies both BUY GOOG -> highest priority ("a") claims it once.
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("a", SignalType.BUY), _built("b", SignalType.BUY)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["GOOG"],
+        )
+        assert result.entries_signaled == 1
+        assert result.entries_placed == 1
+        assert len(broker.orders_placed) == 1
+        assert broker.orders_placed[0].order_ref == "a"
+        assert result.entries_placed_by_strategy == {"a": 1}
+
+    async def test_lower_priority_wins_when_higher_holds(self):
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("a", SignalType.HOLD), _built("b", SignalType.BUY)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["GOOG"],
+        )
+        assert result.entries_placed == 1
+        assert broker.orders_placed[0].order_ref == "b"
+
+    async def test_buy_order_ref_set_for_real_donchian(self):
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),  # real Donchian
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["GOOG"],
+        )
+        assert result.entries_placed == 1
+        assert broker.orders_placed[0].order_ref == "donchian"
+
+    async def test_per_strategy_pct_override_sizes_differently(self):
+        # pct=0.009 -> target $900, price $101 -> 8 shares (vs 17 at 1.8%).
+        broker = MockBroker(_account(net_liq=100_000.0), [])
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("small", SignalType.BUY, pct=0.009)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["GOOG"],
+        )
+        assert result.entries_placed == 1
+        assert broker.orders_placed[0].quantity == 8
+
+
+class TestMultiStrategyExits:
+    async def test_only_owner_strategy_evaluates(self):
+        # AAPL owned by "b" (which HOLDs). "a" would SELL, but it's not the owner
+        # -> no exit. Proves exits are strategy-scoped.
+        broker = MockBroker(_account(), [_position("AAPL", qty=10)])
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("a", SignalType.SELL), _built("b", SignalType.HOLD)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=[],
+            position_strategies={"AAPL": "b"},
+        )
+        assert result.exits_placed == 0
+        assert broker.orders_placed == []
+
+    async def test_owner_strategy_sell_places_tagged_exit(self):
+        broker = MockBroker(_account(), [_position("AAPL", qty=10)])
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("a", SignalType.HOLD), _built("b", SignalType.SELL)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=[],
+            position_strategies={"AAPL": "b"},
+        )
+        assert result.exits_placed == 1
+        assert broker.orders_placed[0].order_ref == "b"
+        assert result.exits_placed_by_strategy == {"b": 1}
+
+    async def test_orphan_position_uses_highest_priority(self):
+        # No owner recorded -> highest-priority strategy ("a") evaluates it.
+        broker = MockBroker(_account(), [_position("AAPL", qty=10)])
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("a", SignalType.SELL), _built("b", SignalType.HOLD)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=[],
+            position_strategies={},  # orphan
+        )
+        assert result.exits_placed == 1
+        assert broker.orders_placed[0].order_ref == "a"
+
+    async def test_unknown_owner_falls_back_to_default(self):
+        # Owner id no longer in the active set -> falls back to strategies[0].
+        broker = MockBroker(_account(), [_position("AAPL", qty=10)])
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=[_built("a", SignalType.SELL), _built("b", SignalType.HOLD)],
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=[],
+            position_strategies={"AAPL": "ghost"},
+        )
+        assert result.exits_placed == 1
+        assert broker.orders_placed[0].order_ref == "a"
+
+
+class TestLookbackSizing:
+    def test_short_strategy_keeps_floor(self):
+        from vibe_trade.jobs.submit import _required_lookback_days
+
+        # Donchian required=21 -> ceil(21*1.6)+15=49 -> floored at 60.
+        assert _required_lookback_days(_strats()) == 60
+
+    def test_long_strategy_expands_window(self):
+        from vibe_trade.jobs.submit import _required_lookback_days
+        from vibe_trade.strategy.examples.sma_crossover import SMACrossoverStrategy
+
+        built = [BuiltStrategy(strategy=SMACrossoverStrategy(), pct_per_position=0.018)]
+        # required=50 -> ceil(80)+15 = 95.
+        assert _required_lookback_days(built) == 95
+
+    async def test_empty_strategies_rejected(self):
+        broker = MockBroker(_account(), [])
+        with pytest.raises(ValueError):
+            await run_submit(
+                broker=broker,
+                strategies=[],
+                data_provider=MockDataProvider(),
+                risk_manager=_risk_mgr(),
+                universe=[],
+            )
 
 
 class TestNoDbWrites:
