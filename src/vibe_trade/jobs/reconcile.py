@@ -5,7 +5,8 @@ Flow:
 2. Pull `ib.trades()` (for orderStatus terminal-state detection) and
    `ib.fills()` (for execution details: shares/price/permId/realized PnL)
 3. Pull account summary + positions for portfolio snapshot
-4. For each pending trade in DB (SUBMITTED + PENDING_CLOSE today):
+4. For each pending trade in DB (every SUBMITTED + PENDING_CLOSE row, any
+   date -- stale rows from missed runs are resolved via day-order expiry):
    - SUBMITTED BUY: aggregate fills by `trade.perm_id`. Transition to
      OPEN / PARTIALLY_FILLED / CANCELLED via `confirm_buy_fill` or
      `mark_cancelled`. CANCELLED is set when no fills exist AND the IB
@@ -18,7 +19,7 @@ Flow:
 6. Upsert `daily_pnl` with real `trades_opened` / `trades_closed` counts
 
 Idempotent: rerunning is safe. Already-reconciled trades aren't in
-`get_pending_orders_for_today` so they're skipped. Snapshot is delete-then-insert.
+`get_pending_orders` so they're skipped. Snapshot is delete-then-insert.
 
 Cross-process: identifies orders by `permId` (preserved across processes), not
 `orderId` (resets to 0). Verified live 2026-04-27.
@@ -102,6 +103,14 @@ async def run_reconcile(
     }
     fills_by_perm: dict[int, list] = defaultdict(list)
     for f in ib_fills:
+        # permId=0 is an IB quirk (legacy/manual orders). Grouping them would
+        # collapse distinct orders into one bucket -- skip with a warning.
+        if not f.execution.permId:
+            logger.warning(
+                "fill with permId=0 ignored: %s %s shares=%s",
+                f.contract.symbol, f.execution.side, f.execution.shares,
+            )
+            continue
         fills_by_perm[f.execution.permId].append(f)
 
     logger.info(
@@ -110,9 +119,11 @@ async def run_reconcile(
         account.net_liquidation, len(positions), len(ib_trades), len(ib_fills),
     )
 
-    pending = trade_repo.get_pending_orders_for_today(today)
+    pending = trade_repo.get_pending_orders()
     result.pending_count = len(pending)
-    logger.info("found %d pending trade(s) in DB for %s", len(pending), today)
+    logger.info("found %d pending trade(s) in DB", len(pending))
+
+    held_symbols = {p.symbol for p in positions if p.quantity > 0}
 
     # Track permIds processed via the DB-pending path so we don't double-handle
     # them as orphans below.
@@ -122,11 +133,17 @@ async def run_reconcile(
             if trade.status == "SUBMITTED":
                 if trade.perm_id:
                     processed_perm_ids.add(trade.perm_id)
-                _reconcile_buy(trade, trades_by_perm, fills_by_perm, trade_repo, result)
+                _reconcile_buy(
+                    trade, trades_by_perm, fills_by_perm, trade_repo, result,
+                    today=today,
+                )
             elif trade.status == "PENDING_CLOSE":
                 if trade.exit_perm_id:
                     processed_perm_ids.add(trade.exit_perm_id)
-                _reconcile_sell(trade, trades_by_perm, fills_by_perm, trade_repo, result)
+                _reconcile_sell(
+                    trade, trades_by_perm, fills_by_perm, trade_repo, result,
+                    today=today, held_symbols=held_symbols,
+                )
             else:
                 msg = f"trade_id={trade.id} unexpected status={trade.status}"
                 result.errors.append(msg)
@@ -217,7 +234,10 @@ async def run_reconcile(
         trades_closed=result.closed,
         account_value=account.net_liquidation,
         total_cash=account.total_cash,
-        open_positions_count=len(positions),
+        # Longs only -- must match submit's cap definition (quantity > 0).
+        # len(positions) also counted shorts/zero rows and read 61 on a
+        # 50-cap day (PROJECT_MASTER_STATE.md §7 anomaly).
+        open_positions_count=len([p for p in positions if p.quantity > 0]),
     )
 
     logger.info(
@@ -231,12 +251,21 @@ async def run_reconcile(
     return result
 
 
+def _is_stale(submitted: datetime | None, today: date) -> bool:
+    """A pending row from a previous day. IB market orders are DAY orders --
+    they cannot fill on a later day, so a stale row with no visible fills is
+    resolvable: the order expired at that day's close."""
+    return submitted is not None and submitted.date() < today
+
+
 def _reconcile_buy(
     trade,
     trades_by_perm: dict,
     fills_by_perm: dict,
     repo: TradeRepository,
     result: ReconcileResult,
+    *,
+    today: date,
 ) -> None:
     """SUBMITTED -> OPEN / PARTIALLY_FILLED / CANCELLED."""
     perm_id = trade.perm_id
@@ -256,6 +285,19 @@ def _reconcile_buy(
             logger.info(
                 "CANCEL BUY trade_id=%d %s perm_id=%s status=%s",
                 trade.id, trade.symbol, perm_id, order_status,
+            )
+        elif _is_stale(trade.submitted_at, today):
+            # Day order from a previous day, no fills visible, IB doesn't
+            # know it anymore -- it expired unfilled at that day's close.
+            repo.mark_cancelled(
+                trade.id,
+                f"BUY perm_id={perm_id} stale day order (submitted "
+                f"{trade.submitted_at:%Y-%m-%d}), expired unfilled",
+            )
+            result.cancelled += 1
+            logger.warning(
+                "STALE BUY trade_id=%d %s perm_id=%s submitted=%s -> CANCELLED",
+                trade.id, trade.symbol, perm_id, trade.submitted_at,
             )
         else:
             result.skipped_still_working += 1
@@ -290,6 +332,9 @@ def _reconcile_sell(
     fills_by_perm: dict,
     repo: TradeRepository,
     result: ReconcileResult,
+    *,
+    today: date,
+    held_symbols: set[str],
 ) -> None:
     """PENDING_CLOSE -> CLOSED / PARTIALLY_FILLED / (CANCELLED reverts to OPEN)."""
     perm_id = trade.exit_perm_id
@@ -300,8 +345,13 @@ def _reconcile_sell(
     )
 
     if not fills:
-        if order_status in TERMINAL_CANCELLED:
-            # Status=CANCELLED reverts the row to OPEN (position still held).
+        stale = _is_stale(trade.exit_submitted_at, today)
+        if order_status in TERMINAL_CANCELLED or (
+            stale and trade.symbol in held_symbols
+        ):
+            # Cancelled by IB, or a stale day order whose position we still
+            # hold (= it expired unfilled). Either way: revert the row to
+            # OPEN, position still held.
             repo.confirm_close_fill(
                 trade_id=trade.id,
                 exit_price=0.0,
@@ -313,9 +363,23 @@ def _reconcile_sell(
             )
             result.cancelled += 1
             logger.info(
-                "CANCEL SELL trade_id=%d %s perm_id=%s status=%s -> reverted OPEN",
+                "CANCEL SELL trade_id=%d %s perm_id=%s status=%s%s -> reverted OPEN",
                 trade.id, trade.symbol, perm_id, order_status,
+                " (stale, position still held)" if stale else "",
             )
+        elif stale:
+            # Stale SELL, no fills visible, and we no longer hold the symbol:
+            # it DID sell on a previous day but the fill is gone from
+            # ib.fills() (e.g. reconcile missed that day). We can't invent an
+            # exit price -- flag for manual resolution via the override CLI.
+            msg = (
+                f"trade_id={trade.id} {trade.symbol}: stale PENDING_CLOSE "
+                f"(submitted {trade.exit_submitted_at:%Y-%m-%d}), position no "
+                f"longer held -- exit fill unrecoverable from ib.fills(); "
+                f"resolve manually"
+            )
+            result.errors.append(msg)
+            logger.error(msg)
         else:
             result.skipped_still_working += 1
             logger.info(

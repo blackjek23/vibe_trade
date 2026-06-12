@@ -61,6 +61,24 @@ class TestEmpty:
         assert db_session.query(Trade).count() == 0
 
 
+class TestPermIdZeroGuard:
+    async def test_permid_zero_fills_skipped(self, db_session: Session):
+        """permId=0 fills (IB quirk for legacy/manual orders) must be skipped,
+        not grouped -- two distinct orders would collapse into one bucket."""
+        broker = MockBroker(
+            fills=[
+                _fill(perm_id=0, order_id=1, symbol="MANUAL1", side="BOT", shares=5),
+                _fill(perm_id=0, order_id=2, symbol="MANUAL2", side="BOT", shares=7),
+            ]
+        )
+        repo = TradeRepository(db_session)
+        result = await run_record(broker=broker, repo=repo)
+        assert result.fills_seen == 2
+        assert result.perm_ids_seen == 0
+        assert result.buys_inserted == 0
+        assert db_session.query(Trade).count() == 0
+
+
 class TestBuyFills:
     async def test_buy_inserts_submitted_row(self, db_session: Session):
         broker = MockBroker(

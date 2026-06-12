@@ -75,6 +75,14 @@ async def run_record(
     # fills appear for partial-fill scenarios (sum the shares).
     by_perm: dict[int, list] = defaultdict(list)
     for f in fills:
+        # permId=0 is an IB quirk (legacy/manual orders). Grouping them would
+        # collapse distinct orders into one bucket -- skip with a warning.
+        if not f.execution.permId:
+            logger.warning(
+                "fill with permId=0 ignored: %s %s shares=%s",
+                f.contract.symbol, f.execution.side, f.execution.shares,
+            )
+            continue
         by_perm[f.execution.permId].append(f)
     result.perm_ids_seen = len(by_perm)
 

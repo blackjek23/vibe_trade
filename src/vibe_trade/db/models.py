@@ -1,4 +1,14 @@
-"""SQLAlchemy ORM models for trade tracking."""
+"""SQLAlchemy ORM models for trade tracking.
+
+Datetime convention: all DateTime columns are NAIVE. Two sources feed them:
+- IB fill times arrive tz-aware UTC and are stored with tzinfo stripped
+  (UTC wall-clock) -- see ``jobs.reconcile._strip_tz``.
+- ``datetime.now()`` fallbacks store host-local wall-clock
+  (Asia/Jerusalem in prod containers).
+Date-window queries (e.g. ``get_pending_orders_for_today``) tolerate the
+few-hour skew because jobs run after US market close. Don't compare these
+columns across zones at finer granularity without normalizing first.
+"""
 
 from __future__ import annotations
 

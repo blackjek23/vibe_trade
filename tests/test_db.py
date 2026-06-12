@@ -248,10 +248,9 @@ class TestMarkCancelled:
         assert cancelled.notes == "IB rejected: no market data"
 
 
-class TestGetPendingOrdersForToday:
-    def test_returns_todays_submitted_and_pending_close(self, db_session: Session):
+class TestGetPendingOrders:
+    def test_returns_all_submitted_and_pending_close_any_date(self, db_session: Session):
         repo = TradeRepository(db_session)
-        today = date(2026, 4, 20)
         now = datetime(2026, 4, 20, 16, 0)
 
         # Today: one SUBMITTED, one PENDING_CLOSE
@@ -266,7 +265,8 @@ class TestGetPendingOrdersForToday:
         repo.confirm_buy_fill(t2.id, 400.0, 5, now, "OPEN")
         repo.mark_pending_close(t2.id, 3, now)
 
-        # Yesterday: SUBMITTED — should NOT be returned
+        # Yesterday: SUBMITTED — MUST be returned too (stale rows stay
+        # visible so a missed reconcile can resolve them; SELL-side Bug #5)
         repo.create_submitted_buy(
             symbol="GOOG", strategy_name="s", requested_quantity=3,
             ib_order_id=4, submitted_at=datetime(2026, 4, 19, 16, 0),
@@ -279,13 +279,13 @@ class TestGetPendingOrdersForToday:
         )
         repo.confirm_buy_fill(t4.id, 300.0, 2, now, "OPEN")
 
-        pending = repo.get_pending_orders_for_today(today)
+        pending = repo.get_pending_orders()
         symbols = {t.symbol for t in pending}
-        assert symbols == {"AAPL", "MSFT"}
+        assert symbols == {"AAPL", "MSFT", "GOOG"}
 
-    def test_empty_when_nothing_today(self, db_session: Session):
+    def test_empty_when_nothing_pending(self, db_session: Session):
         repo = TradeRepository(db_session)
-        assert repo.get_pending_orders_for_today(date(2026, 4, 20)) == []
+        assert repo.get_pending_orders() == []
 
 
 class TestTradeReads:

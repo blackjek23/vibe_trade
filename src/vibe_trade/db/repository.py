@@ -208,26 +208,18 @@ class TradeRepository:
     def get_open_trades(self) -> list[Trade]:
         return self.session.query(Trade).filter(Trade.status == "OPEN").all()
 
-    def get_pending_orders_for_today(self, today: date) -> list[Trade]:
-        """All trades needing reconciliation today: SUBMITTED BUYs or PENDING_CLOSE SELLs
-        whose order was submitted today.
+    def get_pending_orders(self) -> list[Trade]:
+        """All trades needing reconciliation: every SUBMITTED BUY and
+        PENDING_CLOSE SELL, regardless of submit date.
+
+        Deliberately NOT date-filtered: a row left pending by a missed or
+        crashed reconcile run must stay visible to later runs, otherwise it
+        is stuck forever (SELL-side twin of Bug #5 — see SESSION_H_FINDINGS).
+        Stale rows are resolved by reconcile's day-order expiry logic.
         """
-        start = datetime.combine(today, datetime.min.time())
-        end = datetime.combine(today, datetime.max.time())
         return (
             self.session.query(Trade)
-            .filter(
-                (
-                    (Trade.status == "SUBMITTED")
-                    & (Trade.submitted_at >= start)
-                    & (Trade.submitted_at <= end)
-                )
-                | (
-                    (Trade.status == "PENDING_CLOSE")
-                    & (Trade.exit_submitted_at >= start)
-                    & (Trade.exit_submitted_at <= end)
-                )
-            )
+            .filter(Trade.status.in_(("SUBMITTED", "PENDING_CLOSE")))
             .all()
         )
 

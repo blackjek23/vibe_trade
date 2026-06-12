@@ -26,7 +26,7 @@ What it does (per V2 architecture):
     5. Upserts DailyPnL with real `trades_opened` / `trades_closed` counts
 
 Idempotent: rerunning is safe. Already-reconciled trades (status OPEN/CLOSED/etc.)
-are not in `get_pending_orders_for_today` so they're skipped. Snapshot delete-then-insert.
+are not in `get_pending_orders` so they're skipped. Snapshot delete-then-insert.
 
 DB location: `data/test_paper.db` -- same as `scratch_save_to_db.py`, gitignored.
 """
@@ -119,7 +119,7 @@ async def main() -> None:
             snap_repo = PortfolioSnapshotRepository(session)
             daily_repo = DailyPnLRepository(session)
 
-            pending = trade_repo.get_pending_orders_for_today(today)
+            pending = trade_repo.get_pending_orders()
             print(f"\n=== Reconciling {len(pending)} pending trade(s) from DB ===")
 
             opened_count = 0   # SUBMITTED -> OPEN or PARTIALLY_FILLED

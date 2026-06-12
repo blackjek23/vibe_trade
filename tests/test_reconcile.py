@@ -433,6 +433,167 @@ class TestOrphanFills:
         assert trade_repo.find_by_exit_perm_id(555) is None
 
 
+class TestStalePendingResolution:
+    """Pending rows from previous days (missed/crashed reconcile runs) must
+    stay visible and get resolved -- the SELL-side twin of Bug #5.
+    """
+
+    @staticmethod
+    def _yesterday() -> datetime:
+        from datetime import timedelta
+        return datetime.now() - timedelta(days=1)
+
+    def _make_stale_pending_close(self, repo: TradeRepository, *, symbol="F",
+                                  buy_perm=900, sell_perm=901, qty=10,
+                                  entry_price=12.0) -> Trade:
+        """OPEN trade whose SELL was submitted YESTERDAY (never reconciled)."""
+        yesterday = self._yesterday()
+        submitted = repo.create_submitted_buy(
+            symbol=symbol, strategy_name="donchian", requested_quantity=qty,
+            ib_order_id=4, submitted_at=yesterday, perm_id=buy_perm,
+        )
+        repo.confirm_buy_fill(
+            submitted.id, entry_price=entry_price, filled_quantity=qty,
+            entry_time=yesterday, status="OPEN",
+        )
+        repo.mark_pending_close(
+            submitted.id, exit_ib_order_id=23,
+            exit_submitted_at=yesterday, exit_perm_id=sell_perm,
+        )
+        return submitted
+
+    async def test_stale_pending_close_with_todays_fill_closes(self, db_session: Session):
+        """The headline late-SELL-fill case: SELL flipped PENDING_CLOSE yesterday,
+        fill shows up in today's ib.fills() -> CLOSED with real P&L (previously
+        the date filter hid the row forever)."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        trade = self._make_stale_pending_close(trade_repo, sell_perm=901,
+                                               qty=10, entry_price=12.0)
+        broker = MockBroker(
+            trades=[_ib_trade(perm_id=901, symbol="F", action="SELL", status="Filled")],
+            fills=[_fill(perm_id=901, order_id=23, symbol="F", side="SLD",
+                         shares=10, price=14.0, realized_pnl=20.0)],
+        )
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.closed == 1
+        row = db_session.get(Trade, trade.id)
+        assert row.status == "CLOSED"
+        assert row.pnl == 20.0
+
+    async def test_stale_buy_no_fills_marked_cancelled(self, db_session: Session):
+        """SUBMITTED yesterday, no fills, IB doesn't know the order -- day
+        orders can't fill on a later day, so it expired: CANCELLED."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        stale = trade_repo.create_submitted_buy(
+            symbol="OLD", strategy_name="donchian", requested_quantity=10,
+            ib_order_id=9, submitted_at=self._yesterday(), perm_id=333,
+        )
+        broker = MockBroker()  # IB has no trace of the order
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.cancelled == 1
+        row = db_session.get(Trade, stale.id)
+        assert row.status == "CANCELLED"
+        assert "stale day order" in row.notes
+
+    async def test_stale_sell_position_still_held_reverts_open(self, db_session: Session):
+        """PENDING_CLOSE from yesterday, no fills, but we still hold the
+        symbol at IB -- the SELL expired unfilled: revert to OPEN."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        trade = self._make_stale_pending_close(trade_repo, symbol="HELD",
+                                               sell_perm=902)
+        broker = MockBroker(positions=[
+            Position(symbol="HELD", quantity=10, avg_cost=12.0,
+                     market_price=13.0, market_value=130.0, unrealized_pnl=10.0),
+        ])
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.cancelled == 1
+        row = db_session.get(Trade, trade.id)
+        assert row.status == "OPEN"
+        assert row.exit_perm_id is None
+
+    async def test_stale_sell_position_gone_flags_manual_resolution(self, db_session: Session):
+        """PENDING_CLOSE from yesterday, no fills, position no longer held --
+        it sold but the fill is unrecoverable from ib.fills(). Don't invent a
+        price: flag an error and leave the row for manual resolution."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        trade = self._make_stale_pending_close(trade_repo, symbol="GONE",
+                                               sell_perm=903)
+        broker = MockBroker()  # symbol not in positions, no fills
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert any("resolve manually" in e for e in result.errors)
+        row = db_session.get(Trade, trade.id)
+        assert row.status == "PENDING_CLOSE"  # untouched, awaiting operator
+
+    async def test_same_day_still_working_not_treated_as_stale(self, db_session: Session):
+        """A row submitted TODAY with a working order must keep being skipped,
+        not cancelled by the staleness logic."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        submitted = _make_submitted_buy(trade_repo, perm_id=111)
+        broker = MockBroker(
+            trades=[_ib_trade(perm_id=111, symbol="T", action="BUY", status="Submitted")],
+        )
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.skipped_still_working == 1
+        assert db_session.get(Trade, submitted.id).status == "SUBMITTED"
+
+
+class TestPermIdZeroGuard:
+    async def test_permid_zero_fill_ignored_not_orphaned(self, db_session: Session):
+        """permId=0 fills (IB quirk for legacy/manual orders) must not be
+        grouped or back-filled -- two distinct orders would collapse into one."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        broker = MockBroker(
+            fills=[
+                _fill(perm_id=0, order_id=1, symbol="MANUAL1", side="BOT", shares=5),
+                _fill(perm_id=0, order_id=2, symbol="MANUAL2", side="BOT", shares=7),
+            ],
+        )
+        result = await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+        assert result.orphan_fills_inserted == 0
+        assert trade_repo.find_by_perm_id(0) is None
+
+
+class TestLongsOnlyPositionCount:
+    async def test_open_positions_count_excludes_non_longs(self, db_session: Session):
+        """daily_pnl.open_positions_count must match submit's cap definition
+        (quantity > 0). Shorts/zero rows previously inflated it past the cap
+        (61 on a 50-cap day, PROJECT_MASTER_STATE.md §7)."""
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        positions = [
+            Position(symbol="LONG1", quantity=10, avg_cost=10.0,
+                     market_price=10.0, market_value=100.0, unrealized_pnl=0.0),
+            Position(symbol="LONG2", quantity=5, avg_cost=20.0,
+                     market_price=20.0, market_value=100.0, unrealized_pnl=0.0),
+            Position(symbol="SHORT", quantity=-3, avg_cost=30.0,
+                     market_price=30.0, market_value=-90.0, unrealized_pnl=0.0),
+            Position(symbol="FLAT", quantity=0, avg_cost=0.0,
+                     market_price=0.0, market_value=0.0, unrealized_pnl=0.0),
+        ]
+        broker = MockBroker(positions=positions)
+        await run_reconcile(broker=broker, trade_repo=trade_repo,
+                            snap_repo=snap_repo, daily_repo=daily_repo)
+        row = db_session.query(DailyPnL).filter_by(date=date.today()).first()
+        assert row.open_positions_count == 2
+
+
 class TestRobustness:
     async def test_per_trade_exception_doesnt_abort(self, db_session: Session):
         trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
