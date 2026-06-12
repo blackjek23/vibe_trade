@@ -288,8 +288,8 @@ class TestDailyPnL:
     async def test_upserts_with_real_counts(self, db_session: Session):
         trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
         # Set up 1 BUY filling and 1 SELL filling in the same run.
-        submitted = _make_submitted_buy(trade_repo, perm_id=111)
-        closed = _make_pending_close(trade_repo, sell_perm=901)
+        _make_submitted_buy(trade_repo, perm_id=111)
+        _make_pending_close(trade_repo, sell_perm=901)
         broker = MockBroker(
             trades=[
                 _ib_trade(perm_id=111, symbol="T", action="BUY", status="Filled"),
@@ -599,7 +599,7 @@ class TestRobustness:
         trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
         # Two pending; first will raise during transition because the orderStatus
         # mock is malformed, second processes cleanly.
-        bad_buy = _make_submitted_buy(trade_repo, symbol="BAD", perm_id=111)
+        _make_submitted_buy(trade_repo, symbol="BAD", perm_id=111)
         good_buy = _make_submitted_buy(trade_repo, symbol="GOOD", perm_id=222)
 
         # bad_buy's fills will trigger a TypeError because we set shares to a string.

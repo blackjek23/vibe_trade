@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from datetime import date
 from pathlib import Path
 from typing import Callable, Optional
@@ -107,12 +106,34 @@ def _run_with_crash_alert(
     This is Bug #6 in docs/SESSION_H_FINDINGS.md -- before this wrapper, a
     Gateway disconnect at 16:00 silently crashed without notification.
     """
+    _warn_if_live_mode(job_name, config)
     try:
         asyncio.run(coro_factory(config, **factory_kwargs))
     except Exception as exc:
         logger.exception("%s crashed: %s", job_name, exc)
         _send_crash_alert(job_name, config, exc)
         raise
+
+
+def _warn_if_live_mode(job_name: str, config) -> None:
+    """Loud, unmissable banner when running against a real-money account.
+
+    Guards against the silent paper->live config slip: every job announces
+    live mode in both the console and the log file. ASCII only (Windows
+    cp1252 console gotcha, see CLAUDE.md).
+    """
+    mode = getattr(getattr(config, "general", None), "mode", "paper")
+    if mode != "live":
+        return
+    port = config.broker.get_port("live")
+    logger.warning(
+        "LIVE TRADING MODE: %s will place real-money orders (port %d)",
+        job_name, port,
+    )
+    console.print(
+        f"[bold red]*** LIVE TRADING MODE -- {job_name} places real-money "
+        f"orders (port {port}) ***[/bold red]"
+    )
 
 
 def _send_crash_alert(job_name: str, config, exc: Exception) -> None:
@@ -670,7 +691,7 @@ def _run_backtest_cli(
         BENCH_SYMBOLS, start=start, end=end, force_refresh=force_refresh,
     )
     benchmarks: list[BenchmarkMetrics] = []
-    bench_closes: dict[str, "pd.Series"] = {}
+    bench_closes = {}  # {symbol: close-price Series} for the plot overlay
     for sym in BENCH_SYMBOLS:
         if sym not in bench_paths:
             continue
@@ -816,11 +837,9 @@ def status(
     session_factory = init_db(config.general.db_path)
     session = session_factory()
 
-    from vibe_trade.db.repository import DailyPnLRepository, TradeRepository
-    from datetime import date
+    from vibe_trade.db.repository import TradeRepository
 
     trade_repo = TradeRepository(session)
-    daily_repo = DailyPnLRepository(session)
 
     # Open positions
     open_trades = trade_repo.get_open_trades()
@@ -1212,7 +1231,7 @@ def panic(
 ) -> None:
     """PANIC: Close all positions immediately."""
     if not confirm:
-        confirmed = typer.confirm(
+        typer.confirm(
             "This will close ALL positions immediately. Are you sure?",
             abort=True,
         )

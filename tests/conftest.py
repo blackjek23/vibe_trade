@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from vibe_trade.config import AppConfig, load_config
+from vibe_trade.config import AppConfig
 from vibe_trade.db.models import Base
 
 

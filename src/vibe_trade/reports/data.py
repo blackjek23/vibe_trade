@@ -7,7 +7,12 @@ have no SQLAlchemy dependency.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from vibe_trade.db.models import DailyPnL, PortfolioSnapshot, Trade
 
 
 @dataclass
@@ -39,14 +44,6 @@ class ClosedTrade:
 
 
 # ---------------------------------------------------------------- loaders
-
-
-from datetime import timedelta
-
-from sqlalchemy import func
-from sqlalchemy.orm import Session
-
-from vibe_trade.db.models import DailyPnL, PortfolioSnapshot, Trade
 
 
 def load_daily_pnl(session: Session, days: int, today: date) -> list[DailyRow]:

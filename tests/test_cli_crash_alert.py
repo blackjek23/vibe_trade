@@ -100,6 +100,30 @@ class TestSuccessfulRunSendsNoAlert:
         notifier.notify_error.assert_not_called()
 
 
+class TestLiveModeBanner:
+    """Every job announces live (real-money) mode loudly; paper stays quiet."""
+
+    def test_live_mode_logs_warning(self, caplog):
+        import logging
+
+        from vibe_trade.config import AppConfig, GeneralConfig
+
+        config = AppConfig(general=GeneralConfig(mode="live"))
+        with caplog.at_level(logging.WARNING, logger="vibe_trade.cli"):
+            _run_with_crash_alert("submit", config, _coro_factory_ok())
+        assert any("LIVE TRADING MODE" in r.message for r in caplog.records)
+
+    def test_paper_mode_no_banner(self, caplog):
+        import logging
+
+        from vibe_trade.config import AppConfig
+
+        config = AppConfig()  # mode defaults to paper
+        with caplog.at_level(logging.WARNING, logger="vibe_trade.cli"):
+            _run_with_crash_alert("submit", config, _coro_factory_ok())
+        assert not any("LIVE TRADING MODE" in r.message for r in caplog.records)
+
+
 class TestNotifierFailureDoesNotSwallowRealError:
     def test_notifier_construction_failure_propagates_real_error(self):
         """If _get_notifier itself raises during the alert path, we still

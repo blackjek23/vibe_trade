@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 from vibe_trade.db.engine import get_session_factory, init_db
 from vibe_trade.db.models import (
     DailyPnL,
-    PortfolioSnapshot,
     ScanLog,
     Signal,
     Trade,
@@ -254,7 +253,7 @@ class TestGetPendingOrders:
         now = datetime(2026, 4, 20, 16, 0)
 
         # Today: one SUBMITTED, one PENDING_CLOSE
-        t1 = repo.create_submitted_buy(
+        repo.create_submitted_buy(
             symbol="AAPL", strategy_name="s", requested_quantity=10,
             ib_order_id=1, submitted_at=now,
         )

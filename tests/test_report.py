@@ -9,8 +9,6 @@ import pytest
 
 from vibe_trade.reports.data import ClosedTrade, DailyRow, HoldingRow
 from vibe_trade.reports.metrics import (
-    ClosedTradeStats,
-    ReportMetrics,
     compute_closed_trade_stats,
     compute_metrics,
 )

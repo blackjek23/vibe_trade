@@ -171,8 +171,6 @@ def run_backtest(
     skipped_no_data = 0
     force_trim_sells = 0
 
-    universe_set = set(universe)
-
     # ------------------------------------------------------------------ loop
     for today_ts in all_dates:
         today: date = today_ts.date()

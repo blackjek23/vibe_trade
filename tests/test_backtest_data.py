@@ -9,7 +9,6 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from vibe_trade.backtest.data import (
     MARKET_CAP_FILENAME,

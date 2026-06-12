@@ -7,7 +7,7 @@ and asserts each computed metric. No engine, no IB, no DB.
 from __future__ import annotations
 
 import math
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 import pytest

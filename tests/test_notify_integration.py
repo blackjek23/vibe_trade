@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
-import pytest
 
 from vibe_trade.config import AppConfig, TelegramConfig
 from vibe_trade.notify.console import ConsoleNotifier
@@ -106,7 +105,7 @@ def test_setup_logging_file_handler_emits_json(tmp_path):
     assert "time" in payload
 
 
-from datetime import date
+from datetime import date  # noqa: E402 -- grouped with the message-format tests below
 
 
 def test_format_submit_msg_normal():
