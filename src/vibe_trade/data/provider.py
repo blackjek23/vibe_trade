@@ -27,6 +27,12 @@ RETRY_BACKOFF_SECONDS: float = 1.5
 # cutting the universe scan from ~5 min sequential to ~30 s (Hygiene #4).
 DEFAULT_BATCH_CONCURRENCY: int = 10
 
+# Hard cap per symbol in a batch. Without it, a hung yfinance call (Yahoo
+# unresponsive, no socket timeout) holds a semaphore slot forever and can
+# wedge the whole submit job. Generous: a normal daily-bar fetch is <2 s,
+# worst retry path ~ 2 tries + 1.5 s backoff.
+DEFAULT_PER_SYMBOL_TIMEOUT_SECONDS: float = 30.0
+
 
 class DataProvider:
     """Fetches OHLCV candles from Yahoo Finance (yfinance).
@@ -94,12 +100,14 @@ class DataProvider:
         timeframe: str = "1d",
         lookback_days: int = 60,
         max_concurrency: int = DEFAULT_BATCH_CONCURRENCY,
+        per_symbol_timeout: float = DEFAULT_PER_SYMBOL_TIMEOUT_SECONDS,
     ) -> dict[str, pd.DataFrame]:
         """Fetch candles for many symbols concurrently.
 
         Returns ``{symbol: DataFrame}`` for every input symbol. A symbol whose
-        fetch fails maps to an empty DataFrame — one bad ticker never aborts
-        the batch (same isolation as the per-symbol submit loop).
+        fetch fails — including exceeding ``per_symbol_timeout`` seconds — maps
+        to an empty DataFrame; one bad ticker never aborts the batch (same
+        isolation as the per-symbol submit loop).
 
         Concurrency is bounded by ``max_concurrency`` so we don't stampede
         Yahoo. Replaces the ~5-min sequential universe scan (Hygiene #4).
@@ -109,7 +117,16 @@ class DataProvider:
         async def _fetch(sym: str) -> tuple[str, pd.DataFrame]:
             async with semaphore:
                 try:
-                    df = await self.get_candles(sym, timeframe, lookback_days)
+                    df = await asyncio.wait_for(
+                        self.get_candles(sym, timeframe, lookback_days),
+                        timeout=per_symbol_timeout,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "batch fetch timed out for %s after %.0fs",
+                        sym, per_symbol_timeout,
+                    )
+                    df = pd.DataFrame()
                 except Exception as exc:  # noqa: BLE001 -- isolate per ticker
                     logger.warning("batch fetch failed for %s: %r", sym, exc)
                     df = pd.DataFrame()

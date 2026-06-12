@@ -91,11 +91,13 @@ def _run_with_crash_alert(
     job_name: str,
     config,
     coro_factory: Callable[..., object],
+    **factory_kwargs,
 ) -> None:
     """Run an async job with a top-level safety net.
 
-    Wraps ``asyncio.run(coro_factory(config))`` in a try/except so that ANY
-    uncaught exception (Gateway disconnect, DB error, whatever) results in:
+    Wraps ``asyncio.run(coro_factory(config, **factory_kwargs))`` in a
+    try/except so that ANY uncaught exception (Gateway disconnect, DB error,
+    whatever) results in:
 
     1. Full traceback logged to the rotating JSON file.
     2. A ``[CRITICAL]`` Telegram alert via a *fresh* notifier (the original
@@ -106,7 +108,7 @@ def _run_with_crash_alert(
     Gateway disconnect at 16:00 silently crashed without notification.
     """
     try:
-        asyncio.run(coro_factory(config))
+        asyncio.run(coro_factory(config, **factory_kwargs))
     except Exception as exc:
         logger.exception("%s crashed: %s", job_name, exc)
         _send_crash_alert(job_name, config, exc)
@@ -217,19 +219,25 @@ def _format_reconcile_msg(result, opened, closed, pnl, today) -> str:
 @app.command()
 def submit(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Bypass the double-run guard (orders already at IB today)",
+    ),
 ) -> None:
     """V2 submit job (16:00 Asia/Jerusalem).
 
     Exits phase: SELL signals on held positions.
     Entries phase: BUY signals on universe minus held tickers.
     Places market orders, NO DB writes (record at 16:25 handles persistence).
+    Aborts if strategy orders are already at IB today (re-run protection);
+    --force overrides.
     """
     config = load_config(config_path)
     _setup_logging(config.general.log_level, config.general.log_file)
-    _run_with_crash_alert("submit", config, _run_submit_cli)
+    _run_with_crash_alert("submit", config, _run_submit_cli, force=force)
 
 
-async def _run_submit_cli(config) -> None:
+async def _run_submit_cli(config, *, force: bool = False) -> None:
     from datetime import date as _date
 
     from vibe_trade.broker.ib_broker import IBBroker
@@ -281,6 +289,7 @@ async def _run_submit_cli(config) -> None:
             universe=universe,
             position_strategies=position_strategies,
             max_positions=config.risk.max_open_positions,
+            force=force,
         )
     finally:
         await broker.disconnect()

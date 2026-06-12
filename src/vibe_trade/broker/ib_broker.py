@@ -187,6 +187,25 @@ class IBBroker(BaseBroker):
         # openOrders() alone loses the contract symbol.
         return [self._to_open_order(t) for t in self.ib.openTrades()]
 
+    async def get_today_order_refs(self) -> set[str]:
+        """orderRefs of today's fills + working orders, across all clients.
+
+        ib.fills() is account-wide (verified live: record/client 2 sees
+        submit/client 1 fills); reqAllOpenOrders covers cross-client working
+        orders. Feeds submit's double-run guard.
+        """
+        await self.ib.reqAllOpenOrdersAsync()
+        refs: set[str] = set()
+        for t in self.ib.openTrades():
+            ref = (getattr(t.order, "orderRef", "") or "").strip()
+            if ref:
+                refs.add(ref)
+        for f in self.ib.fills():
+            ref = (getattr(f.execution, "orderRef", "") or "").strip()
+            if ref:
+                refs.add(ref)
+        return refs
+
     async def cancel_orders_for_symbol(self, symbol: str) -> list[OpenOrder]:
         # Refresh across clients first (see get_open_orders) so a cross-client
         # order is visible to cancel.

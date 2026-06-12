@@ -153,10 +153,11 @@ class _FakeContract:
 
 
 class _FakeOrder:
-    def __init__(self, action: str, qty: int, perm_id: int):
+    def __init__(self, action: str, qty: int, perm_id: int, order_ref: str = ""):
         self.action = action
         self.totalQuantity = qty
         self.permId = perm_id
+        self.orderRef = order_ref
 
 
 class _FakeOrderStatus:
@@ -165,9 +166,10 @@ class _FakeOrderStatus:
 
 
 class _FakeTrade:
-    def __init__(self, symbol: str, action: str, qty: int, perm_id: int, status: str):
+    def __init__(self, symbol: str, action: str, qty: int, perm_id: int, status: str,
+                 order_ref: str = ""):
         self.contract = _FakeContract(symbol)
-        self.order = _FakeOrder(action, qty, perm_id)
+        self.order = _FakeOrder(action, qty, perm_id, order_ref)
         self.orderStatus = _FakeOrderStatus(status)
 
 
@@ -178,10 +180,14 @@ class _FakeIBWithOrders:
     TWS call that pulls every client's open orders, not just the current one.
     """
 
-    def __init__(self, trades: list[_FakeTrade]):
+    def __init__(self, trades: list[_FakeTrade], fills: list | None = None):
         self._trades = trades
+        self._fills = fills or []
         self.cancelled: list[_FakeOrder] = []
         self.req_all_calls = 0
+
+    def fills(self) -> list:
+        return list(self._fills)
 
     async def reqAllOpenOrdersAsync(self):
         self.req_all_calls += 1
@@ -227,6 +233,39 @@ class TestGetOpenOrders:
         await broker.get_open_orders()
 
         assert fake.req_all_calls == 1
+
+
+class TestGetTodayOrderRefs:
+    """Feeds submit's double-run guard: refs from working orders AND fills."""
+
+    async def test_collects_refs_from_open_orders_and_fills(self):
+        from types import SimpleNamespace
+
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fill = SimpleNamespace(
+            execution=SimpleNamespace(orderRef="donchian"),
+        )
+        broker.ib = _FakeIBWithOrders(
+            trades=[_FakeTrade("AAPL", "SELL", 10, 111, "PreSubmitted",
+                               order_ref="trim")],
+            fills=[fill],
+        )
+
+        refs = await broker.get_today_order_refs()
+
+        assert refs == {"trim", "donchian"}
+
+    async def test_blank_refs_excluded(self):
+        from types import SimpleNamespace
+
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fill = SimpleNamespace(execution=SimpleNamespace(orderRef=""))
+        broker.ib = _FakeIBWithOrders(
+            trades=[_FakeTrade("AAPL", "BUY", 10, 111, "PreSubmitted")],
+            fills=[fill],
+        )
+
+        assert await broker.get_today_order_refs() == set()
 
 
 class TestCancelOrdersForSymbol:

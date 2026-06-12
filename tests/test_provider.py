@@ -109,6 +109,22 @@ class TestBatch:
         assert result["BAD"].empty       # failure -> empty df, not an exception
         assert not result["AAPL"].empty  # neighbour unaffected
 
+    async def test_hung_fetch_times_out_to_empty(self, monkeypatch):
+        """A hung yfinance call (Yahoo unresponsive, no socket timeout) must
+        not wedge the batch: per-symbol timeout maps it to an empty df."""
+
+        async def fake_get_candles(self, symbol, timeframe="1h", lookback_days=60):
+            if symbol == "HUNG":
+                await asyncio.sleep(60)  # would hang far past the timeout
+            return _yf_frame()
+
+        monkeypatch.setattr(DataProvider, "get_candles", fake_get_candles)
+        result = await DataProvider().get_candles_batch(
+            ["HUNG", "AAPL"], per_symbol_timeout=0.05,
+        )
+        assert result["HUNG"].empty      # timed out -> empty df, not a hang
+        assert not result["AAPL"].empty  # neighbour unaffected
+
     async def test_concurrency_is_bounded(self, monkeypatch):
         active = 0
         peak = 0

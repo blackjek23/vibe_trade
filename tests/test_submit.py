@@ -76,10 +76,13 @@ class MockBroker:
         account: AccountSummary,
         positions: list[Position],
         place_result_factory=None,
+        today_order_refs: set[str] | None = None,
     ):
         self.account = account
         self._positions = positions
         self.orders_placed: list[OrderRequest] = []
+        # orderRefs already at the broker today (double-run guard input).
+        self._today_order_refs = today_order_refs or set()
         # Default: every order returns FILLED
         self._place_result_factory = place_result_factory or (
             lambda req, idx: OrderResult(
@@ -97,6 +100,9 @@ class MockBroker:
 
     async def get_positions(self) -> list[Position]:
         return list(self._positions)
+
+    async def get_today_order_refs(self) -> set[str]:
+        return set(self._today_order_refs)
 
     async def place_market_order(self, order_request: OrderRequest) -> OrderResult:
         idx = len(self.orders_placed)
@@ -147,6 +153,70 @@ class TestEmpty:
         assert result.exits_placed == 0
         assert result.entries_placed == 0
         assert broker.orders_placed == []
+
+
+class TestDoubleRunGuard:
+    """Submit has no DB state, so IB is the dedup source: strategy orderRefs
+    already present today mean submit ran -- a re-run (cron retry, manual
+    re-invocation) must abort instead of duplicating every order.
+    """
+
+    async def test_aborts_when_strategy_ref_already_at_ib(self):
+        broker = MockBroker(
+            _account(), [_position("AAPL", qty=12)],
+            today_order_refs={"donchian"},
+        )
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})  # would SELL
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["AAPL"],
+        )
+        assert result.aborted_duplicate_run is True
+        assert broker.orders_placed == []          # nothing duplicated
+        assert any("already ran today" in e for e in result.errors)
+
+    async def test_trim_ref_alone_also_aborts(self):
+        broker = MockBroker(_account(), [], today_order_refs={"trim"})
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+        )
+        assert result.aborted_duplicate_run is True
+
+    async def test_unrelated_refs_do_not_abort(self):
+        """Manual override orders (order_ref='manual') must not block submit."""
+        broker = MockBroker(_account(), [], today_order_refs={"manual"})
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+        )
+        assert result.aborted_duplicate_run is False
+
+    async def test_force_bypasses_guard(self):
+        broker = MockBroker(
+            _account(), [_position("AAPL", qty=12)],
+            today_order_refs={"donchian"},
+        )
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})  # SELL
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=[],
+            force=True,
+        )
+        assert result.aborted_duplicate_run is False
+        assert result.exits_placed == 1  # proceeded normally
 
 
 class TestExitsPhase:

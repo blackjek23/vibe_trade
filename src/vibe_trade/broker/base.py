@@ -42,6 +42,16 @@ class BaseBroker(ABC):
     async def get_open_orders(self) -> list[OpenOrder]:
         """Return all working (unfilled) orders currently live at the broker."""
 
+    async def get_today_order_refs(self) -> set[str]:
+        """orderRefs seen at the broker today (working orders + fills).
+
+        Powers submit's double-run guard: if a strategy ref is already present
+        at IB, submit ran today and re-running would duplicate orders.
+        Non-abstract on purpose -- brokers/mocks without ref visibility inherit
+        this empty default, which turns the guard into a no-op.
+        """
+        return set()
+
     @abstractmethod
     async def cancel_orders_for_symbol(self, symbol: str) -> list[OpenOrder]:
         """Cancel every working order for `symbol`. Returns what was cancelled."""

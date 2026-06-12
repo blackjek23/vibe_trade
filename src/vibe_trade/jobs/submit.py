@@ -90,6 +90,10 @@ class SubmitResult:
     entries_phase_skipped: bool = False  # True if at position cap
     cap_reason: str = ""
 
+    # Double-run guard: True when submit aborted because strategy orderRefs
+    # were already present at IB today (cron retry / manual re-run).
+    aborted_duplicate_run: bool = False
+
     data_unavailable: int = 0  # universe tickers yfinance returned no bars for
 
     # Per-strategy attribution (Session L): {strategy_id: count} for placed orders.
@@ -120,6 +124,7 @@ async def run_submit(
     position_strategies: dict[str, str] | None = None,
     max_positions: int = DEFAULT_MAX_POSITIONS,
     lookback_days: int | None = None,
+    force: bool = False,
 ) -> SubmitResult:
     """Execute one submit cycle. Caller manages the broker connection.
 
@@ -137,6 +142,26 @@ async def run_submit(
         raise ValueError("run_submit requires at least one strategy")
 
     result = SubmitResult()
+
+    # ------------------------------------------------- double-run guard
+    # Submit has no DB state (V2 invariant), so IB itself is the dedup
+    # source: if any of our strategy orderRefs (or "trim") already appear in
+    # today's fills or working orders, submit already ran today and a re-run
+    # (cron retry, manual re-invocation) would duplicate every order.
+    if not force:
+        known_refs = {b.strategy.name for b in strategies} | {"trim"}
+        seen_today = await broker.get_today_order_refs()
+        dup_refs = sorted(seen_today & known_refs)
+        if dup_refs:
+            result.aborted_duplicate_run = True
+            msg = (
+                f"submit already ran today: order ref(s) {dup_refs} found at "
+                "IB. Re-running would duplicate orders -- aborting. "
+                "Pass force=True (CLI: --force) to override."
+            )
+            result.errors.append(msg)
+            logger.error(msg)
+            return result
     owners = position_strategies or {}
     by_name = {b.strategy.name: b for b in strategies}
     default_built = strategies[0]
