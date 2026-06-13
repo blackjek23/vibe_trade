@@ -49,8 +49,8 @@ test_db.py,TestConfirmCloseFill,test_closed_stores_pnl_from_caller,V2: PENDING_C
 test_db.py,TestConfirmCloseFill,test_cancelled_reverts_to_open,V2: PENDING_CLOSE → CANCELLED reverts trade to OPEN (position not sold — kept)
 test_db.py,TestConfirmCloseFill,test_rejects_non_pending_close,V2: can't confirm close on a non-PENDING_CLOSE trade
 test_db.py,TestMarkCancelled,test_marks_and_records_reason,V2: force a trade to CANCELLED and record the reason in notes
-test_db.py,TestGetPendingOrdersForToday,test_returns_todays_submitted_and_pending_close,V2: reconcile query returns SUBMITTED BUYs + PENDING_CLOSE SELLs submitted today (excludes yesterday and non-pending)
-test_db.py,TestGetPendingOrdersForToday,test_empty_when_nothing_today,V2: empty DB returns [] not an error
+test_db.py,TestGetPendingOrders,test_returns_all_submitted_and_pending_close_any_date,V2: reconcile query returns all SUBMITTED BUYs + PENDING_CLOSE SELLs regardless of date (stale rows stay visible; SELL-side Bug #5)
+test_db.py,TestGetPendingOrders,test_empty_when_nothing_pending,V2: empty DB returns [] not an error
 test_db.py,TestTradeReads,test_get_open_trades,get_open_trades returns only OPEN-status rows (not SUBMITTED not PENDING_CLOSE)
 test_db.py,TestTradeReads,test_get_recent_trades,get_recent_trades honors limit
 test_db.py,TestPortfolioSnapshotRepository,test_save_and_get,V2: reconcile saves N position rows per date — get_snapshot returns them ordered by symbol
@@ -375,3 +375,20 @@ test_record.py,TestStrategyAttribution,test_empty_order_ref_uses_fallback,Empty 
 test_record.py,TestStrategyAttribution,test_distinct_strategies_attributed_per_fill,Each fill attributed to its own strategy id
 test_backtest_cli.py,unit,test_backtest_rejects_unknown_strategy,backtest --strategy rejects an unknown id before fetching
 test_backtest_cli.py,unit,test_backtest_accepts_known_strategy_ids,Registry knows every Session L strategy id the selector offers
+test_reconcile.py,TestStalePendingResolution,test_stale_pending_close_with_todays_fill_closes,Late SELL fill: PENDING_CLOSE from yesterday + fill today -> CLOSED with P&L (was lost under date filter)
+test_reconcile.py,TestStalePendingResolution,test_stale_buy_no_fills_marked_cancelled,Stale SUBMITTED day order with no fills -> CANCELLED (expired)
+test_reconcile.py,TestStalePendingResolution,test_stale_sell_position_still_held_reverts_open,Stale PENDING_CLOSE + position still held at IB -> reverted OPEN
+test_reconcile.py,TestStalePendingResolution,test_stale_sell_position_gone_flags_manual_resolution,Stale PENDING_CLOSE + position gone -> flagged in errors for manual resolution (no invented price)
+test_reconcile.py,TestStalePendingResolution,test_same_day_still_working_not_treated_as_stale,Today's working order is skipped not cancelled by the staleness logic
+test_reconcile.py,TestPermIdZeroGuard,test_permid_zero_fill_ignored_not_orphaned,reconcile skips permId=0 fills (IB quirk) instead of collapsing distinct orders
+test_reconcile.py,TestLongsOnlyPositionCount,test_open_positions_count_excludes_non_longs,daily_pnl.open_positions_count counts longs only (quantity>0) matching submit's cap
+test_record.py,TestPermIdZeroGuard,test_permid_zero_fills_skipped,record skips permId=0 fills (IB quirk) instead of grouping distinct orders
+test_provider.py,TestBatch,test_hung_fetch_times_out_to_empty,Hung yfinance call hits per-symbol timeout -> empty df; batch not wedged
+test_submit.py,TestDoubleRunGuard,test_aborts_when_strategy_ref_already_at_ib,Double-run guard: strategy ref already at IB -> abort placing nothing
+test_submit.py,TestDoubleRunGuard,test_trim_ref_alone_also_aborts,Double-run guard: 'trim' ref alone triggers abort
+test_submit.py,TestDoubleRunGuard,test_unrelated_refs_do_not_abort,Manual override refs don't trip the guard
+test_submit.py,TestDoubleRunGuard,test_force_bypasses_guard,force=True bypasses the double-run guard
+test_broker.py,TestGetTodayOrderRefs,test_collects_refs_from_open_orders_and_fills,get_today_order_refs gathers refs from working orders + fills
+test_broker.py,TestGetTodayOrderRefs,test_blank_refs_excluded,get_today_order_refs drops blank refs
+test_cli_crash_alert.py,TestLiveModeBanner,test_live_mode_logs_warning,Live mode emits a LIVE TRADING MODE warning banner
+test_cli_crash_alert.py,TestLiveModeBanner,test_paper_mode_no_banner,Paper mode stays silent (no banner)

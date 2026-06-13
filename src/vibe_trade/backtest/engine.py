@@ -232,6 +232,12 @@ def run_backtest(
         equity_points.append((today_ts, net_liq))
 
         # --- 3. Generate signals from today's closed bars
+        #
+        # PARITY NOTE: this exits -> force-trim -> entries sequencing mirrors
+        # jobs/submit.py:run_submit by hand (submit needs a broker; we need
+        # next-open fills). If you change submit's phase order, cap handling,
+        # or conflict resolution, update this loop to match or the backtest
+        # silently diverges from production.
         # Exits phase: only held positions
         donchian_exit_symbols: set[str] = set()
         for sym, pos in list(positions.items()):

@@ -10,7 +10,7 @@ A Python swing-trading bot for Interactive Brokers. Trades the S&P 500 universe 
 - **Backtested** — 2018–2026 on top-100 by market cap: +17.1% CAGR, Sharpe 1.14, max drawdown -20.5% (beats SPY/QQQ on Sharpe with half the drawdown).
 - **Telegram notifications** — every job reports submissions, fills, and a daily summary.
 - **Docker deployment** — single image, three compose services, host crontab; `network_mode: host` for IB Gateway.
-- **231 tests** covering broker, sizing, strategy, jobs, backtest, and reconcile flows.
+- **393 tests** covering broker, sizing, strategy, jobs, backtest, and reconcile flows.
 
 ## Strategy
 
@@ -55,7 +55,7 @@ src/vibe_trade/
 ├── backtest/    # data.py, engine.py, metrics.py, plot.py
 └── cli.py       # typer commands
 
-tests/           # 231 tests + TEST_REGISTRY.csv index
+tests/           # 393 tests + TEST_REGISTRY.csv index
 deploy/          # Dockerfile, docker-compose.yml, crontab.example, smoke-test.sh
 docs/            # ARCHITECTURE_V2.md, ROADMAP.md
 scratches/       # live IB-paper diagnostics + DB-write scripts (not pytest)
@@ -101,7 +101,7 @@ Environment variables (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) override TOML v
 
 ```bash
 # Tests
-.venv/Scripts/python -m pytest                  # full suite (~2s, 231 tests)
+.venv/Scripts/python -m pytest                  # full suite (~5s, 393 tests)
 .venv/Scripts/python -m pytest tests/test_donchian.py -v
 
 # Daily V2 commands (run manually or via cron)

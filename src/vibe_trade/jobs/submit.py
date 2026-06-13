@@ -23,6 +23,10 @@ Invariants:
 The function is broker-agnostic for testability — pass any object that
 satisfies the BaseBroker interface. The CLI command (Step 3) handles the
 real-IB connection lifecycle around `run_submit`.
+
+PARITY NOTE: backtest/engine.py replicates the exits -> force-trim -> entries
+sequencing of this job by hand. If you change the phase order, cap handling,
+or entry conflict resolution here, update the backtest loop to match.
 """
 
 from __future__ import annotations

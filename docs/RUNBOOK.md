@@ -134,7 +134,10 @@ strategies accordingly.
 |---|---|
 | `[CRITICAL]` Telegram + job exited non-zero | Uncaught error (often IB Gateway down). Fix Gateway, then **manually rerun that day's job**. |
 | Wednesday ~16:00 Gateway outage | Known IB weekly paper maintenance (seen 5/13, 5/20). Rerun submit/record once Gateway is back, or shift Wednesday's cron later. |
-| Missed a full day | `reconcile` back-fills orphan fills (Bug #5): permIds in `ib.fills()` with no DB row are inserted straight to OPEN. Re-running reconcile recovers most cases. IB can't serve *past-day* fills, so run same-day where possible. |
+| Missed a full day | `reconcile` back-fills orphan fills (Bug #5): permIds in `ib.fills()` with no DB row are inserted straight to OPEN. Stale pending rows from missed days are also resolved (stale BUY → CANCELLED; stale SELL → reverted OPEN if position still held). Re-running reconcile recovers most cases. IB can't serve *past-day* fills, so run same-day where possible. |
+| `resolve manually` error from reconcile | A stale PENDING_CLOSE whose SELL filled on a missed day — the fill is gone from `ib.fills()` and the position is gone from IB, so the exit price is unknowable. Look up the fill in TWS/Gateway trade history and close the row by hand (sqlite or a small script); don't invent a price. |
+| Reconcile crashed mid-run | Per-trade commits mean some trades finalized, others not — re-run reconcile **the same day**: it's idempotent and will finish the rest plus write the snapshot/daily_pnl. If only discovered next day, the stale-row logic above takes over. |
+| Submit aborted: "already ran today" | Double-run guard — strategy orderRefs were found at IB (fills or working orders). This is the guard doing its job after a cron retry. Only pass `--force` if you're certain the first run placed nothing. |
 | Telegram says "N failed" on a Monday-style run | Should not happen: `PreSubmitted` (pre-RTH market orders) counts as success (Bug #1). If it recurs, check IB order status mapping. |
 | Book stuck at 50 positions, no new entries | Expected — at cap, the entire BUY scan is skipped; entries resume when a strategy's SELL frees a slot. |
 | Strategy not trading as expected | `config-check` to confirm it's enabled and in the pool; backtest it; remember regime semantics re-signal daily and held-dedup prevents re-buys. |

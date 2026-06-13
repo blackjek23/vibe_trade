@@ -33,7 +33,7 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image). **321 tests passing.** See `PROJECT_MASTER_STATE.md` for the live status.
+V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image) + Session L (multi-strategy) + audit-hardening session. **393 tests passing.** See `PROJECT_MASTER_STATE.md` for the live status.
 
 - **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done.
 - **Session I** (backtest framework + first run + benchmarks): done. Strategy beats SPY/QQQ on Sharpe (1.14 vs 0.78/0.85) with half the drawdown. Verdict: profitable, proceed forward.

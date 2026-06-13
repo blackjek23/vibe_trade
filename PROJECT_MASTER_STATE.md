@@ -4,12 +4,13 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-06-06 (Session L — multi-strategy registry — CLOSED)
-**HEAD commit:** `5f66d1d` Roadmap: defer BI dashboard, add Session K-plus plot side-addon
-  (Session K-plus + Session L changes in the working tree, not yet committed.)
-**Tests:** 376 passing, 0 failing (+55 this session: crossover/MACD strategies,
-  registry, config strategies section, multi-strategy submit, record attribution,
-  backtest selector). `test_report_plot` still requires matplotlib (`plot` extra).
+**Last updated:** 2026-06-13 (Audit-hardening session — CLOSED)
+**HEAD commit:** `59597f2` Add: GitHub Actions CI + live-mode banner; lint to zero
+  (audit-session docs/backup/parity changes in the working tree, being committed.)
+**Tests:** 393 passing, 0 failing (+17 this session: late-SELL-fill recovery,
+  stale day-order resolution, permId=0 guards, longs-only count, submit
+  double-run guard, batch fetch timeout, live-mode banner). `test_report_plot`
+  still requires matplotlib (`plot` extra).
 **Branch:** `main` — synced with `origin/main`.
 
 ---
@@ -56,7 +57,7 @@ src/vibe_trade/
 ├── backtest/        data.py, engine.py, metrics.py, plot.py
 └── cli.py           typer commands
 
-tests/               231 tests across all modules + TEST_REGISTRY.csv index
+tests/               393 tests across all modules + TEST_REGISTRY.csv index
 docs/                ARCHITECTURE_V2.md, ROADMAP.md
 scratches/           live IB-paper diagnostics + DB-write scripts (not pytest)
 config/              config.example.toml
@@ -91,6 +92,8 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 | **K** — Performance dashboard | `a985525` (CLI) + `0d99e9d` (outlier fix) | New `vibe-trade report --days N` CLI command. Read-only against `daily_pnl` + `portfolio_snapshot` + `trades` — no IB connection. New `src/vibe_trade/reports/` module (data + metrics + render split). Five output sections: header (with small-sample caveat), equity & risk (sharpe / drawdown with peak+trough dates / CAGR / best+worst day), current holdings (top/bottom 5 by unrealized P&L), trade activity (per-day entries, outlier-flagged), trade stats (n/a block until first SELL fires). Derives activity from `trades.entry_time` because the `daily_pnl.trades_opened` column is unreliable. Smoke-tested against the May 11–25 paper-run DB sample — caught a UX bug where outlier days with zero activity (e.g. 5/13 Gateway outage) didn't surface in the activity table; fixed by merging activity-dates with outlier-dates. Pure metrics layer designed to back a future web UI. +23 tests. |
 | **L** — Multi-strategy registry | working tree | Strategy registry V2. New `strategy/registry.py` (`STRATEGY_FACTORIES` + `build_strategy`/`build_strategies`). Three new strategies, all **regime/state** (BUY fast>slow, SELL fast<slow): SMA crossover (`"sma"` 20/50) + EMA crossover (`"ema"` 12/26) sharing `_crossover.py`'s base, + MACD crossover (`"macd"` 12/26/9). New config `[[strategies]]` list (`StrategyConfig`): list order = entry **priority**, optional per-strategy `pct_per_position` (else global fallback), `params` dict; default-when-absent = single donchian. Submit reworked: priority conflict resolution (first BUY wins, `order_ref=<id>`), **strategy-scoped exits** (owner map read from DB by the CLI, passed into the still-DB-free `run_submit`; orphan → highest-priority), per-strategy sizing, dynamic lookback sizing. Record reads `fill.execution.orderRef` → `strategy_name` (fallback for empty/legacy). Backtest gains `--strategy <id>`. config-check now lists + validates active strategies. RSI/Bollinger/ROC and any stop/target/trailing/time/intraday exits deferred (don't fit the stateless interface). +55 tests (376 total). |
 | **H** — Live paper week + Tier-1 fixes + Enhancement #1 | `2de11e1` | Five paper days (Mon–Fri 2026-05-11..15) exposed 3 blockers + 1 enhancement, fixed Saturday 2026-05-16: **Bug #1** `PreSubmitted` now counts as a successful placement (no more "9 failed" Telegram on Monday-style runs). **Bug #5** reconcile back-fills orphan fills (late-fill recovery): permIds in `ib.fills()` with no DB row are inserted straight to OPEN via new `repository.create_filled_buy_from_fill`. **Bug #6** all three job entrypoints wrapped in `_run_with_crash_alert` — uncaught exception sends `[CRITICAL]` Telegram via a fresh notifier then re-raises (non-zero exit for cron). **Enhancement #1** force-trim phase between Donchian exits and entries: when held > max, sell the worst-performing positions by unrealized $ P&L, tagged `orderRef="trim"`, mirrored in `backtest/engine.py`. **Validated live Mon–Wed 2026-05-18..20:** Bug #1 confirmed (`Failed=0`), Bug #5 confirmed (`opened` == `placed`, zero drift), Bug #6 proven on the 5/20 Gateway outage (two `[CRITICAL]` alerts delivered where 5/13 was silent), force-trim deployed (never triggered — book never exceeded the 50 cap). 22 new tests. Full findings + validation log in `docs/SESSION_H_FINDINGS.md`. Tier-3 hygiene deferred. |
+
+| **Audit hardening** — Tier-1/2 correctness + ops | `39ac4d8` + `837cd8e` + `59597f2` | Full-project audit (3 parallel reviews + graphify graph), then fixed the verified findings. **Money-path:** late-SELL-fill recovery — `get_pending_orders_for_today`→`get_pending_orders` (drop date filter so a SELL that fills after 23:30 isn't lost forever; SELL-side twin of Bug #5) + stale day-order resolution in reconcile (stale BUY→CANCELLED, stale SELL→reverted OPEN if still held, else flagged `resolve manually`). Submit **double-run guard** — new `broker.get_today_order_refs()`; submit aborts if a strategy/`trim` ref is already at IB (cron retry / manual re-run protection), `--force` overrides; keeps no-DB-writes invariant. **permId=0 guard** in record+reconcile (IB quirk — distinct orders no longer collapse). `daily_pnl.open_positions_count` now counts longs only (explains the 61-on-50-cap §7 anomaly). **Robustness:** per-symbol `asyncio.wait_for` timeout in `get_candles_batch` (a hung yfinance call no longer wedges submit). **Ops:** GitHub Actions CI (ruff + pytest), live-mode warning banner, DB backup procedure (deploy README + crontab), backtest↔submit parity cross-reference comments, RUNBOOK troubleshooting rows. Lint 22→0. +17 tests (393 total). |
 
 ### Not started (per ROADMAP)
 
@@ -305,11 +308,16 @@ metric definitions to mirror inside whichever BI tool wins.
 - The `daily_pnl.trades_opened` column is unreliable (reads 0 on days with
   confirmed entries — visible in the sample DB on 5/11, 5/12, 5/13). The
   report works around it by deriving activity from `trades.entry_time`, but
-  the column being wrong is a real reconcile defect worth fixing in a
-  future session.
-- The 5/12 row shows `open_positions_count=61` (above the 50 cap) — another
-  reconcile-time anomaly worth investigating. Likely a brief
-  SUBMITTED+OPEN overlap counted twice.
+  the column being wrong is a real reconcile defect. **Still open** after the
+  audit session: `trades_opened` counts `result.opened`, which only
+  increments when reconcile itself flips SUBMITTED→OPEN. If record already
+  persisted the fill same-day (or it back-filled as an orphan), reconcile
+  finds nothing pending and the counter stays 0. Fix needs the May sample DB
+  to confirm; left for a future session.
+- ~~The 5/12 row shows `open_positions_count=61` (above the 50 cap)~~ —
+  **RESOLVED** (audit session, `39ac4d8`): `reconcile` counted
+  `len(positions)` including shorts/zero-qty rows; now counts longs only
+  (`quantity > 0`) to match submit's cap definition.
 - The user mentioned plans for a future web UI to display the dashboard.
   The metrics layer (`reports/metrics.py` + `reports/data.py`) is pure and
   reusable; a web layer renders the same dataclasses to HTML/JSON instead

@@ -124,11 +124,50 @@ docker compose run --rm reconcile   # idempotent (dedup on permId)
 ```
 
 **Idempotency guarantees:**
-- **submit:** Places the same orders IB would deduplicate for the day. Safe to re-run.
+- **submit:** Double-run guard — aborts (with a Telegram error) if strategy
+  orders are already at IB today, so a re-run can't duplicate orders. If you
+  *intend* to submit again (e.g. the first run died halfway), pass
+  `--force`: `docker compose run --rm submit vibe-trade submit --force`.
 - **record:** Deduplicates on `permId` — re-running skips already-recorded fills.
 - **reconcile:** Deduplicates on `permId` — re-running won't double-count.
+  Pending rows from missed days stay visible and are resolved on the next
+  run (day-order expiry logic), so a skipped reconcile self-heals.
 
 **Order matters:** submit must run before record (record reads fills from submit's orders). Record must run before reconcile (reconcile finalizes what record persisted).
+
+## Database Backup
+
+All trade history lives in one SQLite file inside the `vibe-data` named
+volume — a single point of failure. Back it up daily (the crontab example
+includes this line):
+
+```bash
+# Daily 23:45: snapshot the DB out of the Docker volume, keep 14 days.
+mkdir -p /opt/vibe-trade/backups
+docker run --rm -v deploy_vibe-data:/data -v /opt/vibe-trade/backups:/backup \
+  alpine sh -c 'cp /data/vibe_trade.db "/backup/vibe_trade-$(date +%Y%m%d).db"'
+find /opt/vibe-trade/backups -name 'vibe_trade-*.db' -mtime +14 -delete
+```
+
+For off-host safety, sync `/opt/vibe-trade/backups/` to cloud storage
+(e.g. `rclone copy /opt/vibe-trade/backups remote:vibe-trade-backups`).
+
+**Restore procedure:**
+
+```bash
+# 1. Stop cron jobs (comment out the crontab lines) so nothing writes.
+# 2. Copy the chosen snapshot back into the volume:
+docker run --rm -v deploy_vibe-data:/data -v /opt/vibe-trade/backups:/backup \
+  alpine cp /backup/vibe_trade-YYYYMMDD.db /data/vibe_trade.db
+# 3. Verify:
+sqlite3 "$(docker volume inspect deploy_vibe-data -f '{{.Mountpoint}}')/vibe_trade.db" \
+  'SELECT COUNT(*) FROM trades;'
+# 4. Re-enable cron. The next reconcile self-heals any gap (idempotent,
+#    stale pending rows are resolved).
+```
+
+SQLite is safe to copy while jobs are NOT running (all jobs are short-lived;
+23:45 is after reconcile finishes). Don't copy mid-job.
 
 ## Updating the Bot
 

@@ -11,3 +11,7 @@
 
 # Weekly report — Saturday 09:00. Renders reports/<date>-weekly.png + Telegram.
 00 09 * * 6    cd /opt/vibe-trade/deploy && docker compose run --rm report-weekly >> ./logs/cron.log 2>&1
+
+# Daily DB backup — 23:45, after reconcile is done. Keeps 14 days.
+# (See deploy/README.md "Database Backup" for the restore procedure.)
+45 23 * * 1-5  mkdir -p /opt/vibe-trade/backups && docker run --rm -v deploy_vibe-data:/data -v /opt/vibe-trade/backups:/backup alpine sh -c 'cp /data/vibe_trade.db "/backup/vibe_trade-$(date +\%Y\%m\%d).db"' && find /opt/vibe-trade/backups -name 'vibe_trade-*.db' -mtime +14 -delete >> /opt/vibe-trade/deploy/logs/cron.log 2>&1
