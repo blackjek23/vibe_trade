@@ -15,8 +15,14 @@ Flow:
      CLOSED / PARTIALLY_FILLED via `confirm_close_fill`, with realized PnL
      read from `commissionReport.realizedPNL` (we don't compute it). A no-fill
      cancelled SELL reverts the trade to OPEN (position still held).
-5. Write `portfolio_snapshot` rows (one per held ticker)
-6. Upsert `daily_pnl` with real `trades_opened` / `trades_closed` counts
+5. Orphan fills: a permId in `ib.fills()` with no DB row. BUY -> back-filled to
+   OPEN. SELL -> matched to an OPEN row by symbol (FIFO) and closed, because
+   `ib.fills()` only returns the current session and the exit is unrecoverable
+   tomorrow.
+6. OPEN-row drift sweep (`_sweep_open_rows`): OPEN rows IB doesn't back are
+   flagged NEEDS_REVIEW; share-count mismatches are warn-only.
+7. Write `portfolio_snapshot` rows (one per held ticker)
+8. Upsert `daily_pnl` with real `trades_opened` / `trades_closed` counts
 
 Idempotent: rerunning is safe. Already-reconciled trades aren't in
 `get_pending_orders` so they're skipped. Snapshot is delete-then-insert.
@@ -52,7 +58,10 @@ class ReconcileResult:
     cancelled: int = 0             # buy never filled, or sell cancelled (reverted to OPEN)
     skipped_still_working: int = 0 # no fills yet, status still working
     orphan_fills_inserted: int = 0 # fills with no DB row -- back-filled straight to OPEN (Bug #5)
+    orphan_sells_recovered: int = 0 # SELL fills matched to an OPEN row by symbol -> CLOSED
     orphan_sells_unmatched: int = 0 # SELL fills with no matching OPEN trade in DB (warn-only)
+    open_rows_flagged: int = 0     # OPEN rows not held at IB -> NEEDS_REVIEW (drift sweep)
+    qty_divergences: int = 0       # symbols where OPEN-row shares != IB position shares
     snapshot_rows: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -170,12 +179,42 @@ async def run_reconcile(
         try:
             side = fills[0].execution.side
             if side != "BOT":
-                # SELL orphans (no matching OPEN in DB) would need a buy row
-                # to attach to. For now we count + warn, no insert.
-                result.orphan_sells_unmatched += 1
+                # Orphan SELL: the exit filled at IB but no DB row carries this
+                # exit_perm_id -- the 16:25 `record` run was missed, so the row
+                # was never flipped to PENDING_CLOSE and `get_pending_orders`
+                # never sees it. Match by symbol (FIFO) and close it here, while
+                # the fill is still in `ib.fills()`. Waiting is not an option:
+                # `ib.fills()` only returns the current session, so tomorrow this
+                # exit is unrecoverable and the row silently rots at OPEN.
+                symbol = fills[0].contract.symbol
+                open_trade = trade_repo.find_open_by_symbol(symbol)
+                if open_trade is None:
+                    result.orphan_sells_unmatched += 1
+                    logger.warning(
+                        "ORPHAN SELL perm_id=%d %s -- no matching OPEN trade in DB",
+                        perm_id, symbol,
+                    )
+                    continue
+                total_shares, avg_px, latest_time, realized = _aggregate_fills(fills)
+                if total_shares <= 0:
+                    continue
+                closed = trade_repo.close_from_open(
+                    open_trade.id,
+                    exit_price=avg_px,
+                    filled_quantity=int(total_shares),
+                    exit_time=latest_time or datetime.now(),
+                    exit_perm_id=perm_id,
+                    exit_ib_order_id=fills[0].execution.orderId,
+                    ib_realized_pnl=realized,
+                    reason="recovered orphan SELL fill (record run missed)",
+                )
+                result.orphan_sells_recovered += 1
+                result.closed += 1
                 logger.warning(
-                    "ORPHAN SELL perm_id=%d %s -- no matching OPEN trade in DB",
-                    perm_id, fills[0].contract.symbol,
+                    "ORPHAN SELL RECOVERED trade_id=%d %s perm_id=%d shares=%d "
+                    "avg=$%.2f pnl=$%+.2f -> %s",
+                    closed.id, symbol, perm_id, int(total_shares), avg_px,
+                    closed.pnl or 0.0, closed.status,
                 )
                 continue
             total_shares, avg_px, latest_time, _realized = _aggregate_fills(fills)
@@ -205,6 +244,11 @@ async def run_reconcile(
             err = f"orphan perm_id={perm_id}: {exc!r}"
             logger.exception(err)
             result.errors.append(err)
+
+    # ---------------------------------------------------- OPEN-row drift sweep
+    # Runs after orphan recovery so rows just closed from a same-day fill are
+    # already CLOSED and never flagged here.
+    _sweep_open_rows(trade_repo, positions, result)
 
     # ---------------------------------------------------- portfolio snapshot
     snap_rows = snap_repo.save_snapshot(
@@ -242,13 +286,98 @@ async def run_reconcile(
 
     logger.info(
         "reconcile done: opened=%d closed=%d cancelled=%d skipped=%d "
-        "orphan_fills=%d orphan_sells=%d snapshot_rows=%d",
+        "orphan_fills=%d orphan_sells_recovered=%d orphan_sells_unmatched=%d "
+        "open_rows_flagged=%d qty_divergences=%d snapshot_rows=%d",
         result.opened, result.closed, result.cancelled,
         result.skipped_still_working,
-        result.orphan_fills_inserted, result.orphan_sells_unmatched,
-        result.snapshot_rows,
+        result.orphan_fills_inserted, result.orphan_sells_recovered,
+        result.orphan_sells_unmatched, result.open_rows_flagged,
+        result.qty_divergences, result.snapshot_rows,
     )
     return result
+
+
+def _sweep_open_rows(
+    trade_repo: TradeRepository,
+    positions: list,
+    result: ReconcileResult,
+) -> None:
+    """Reconcile ``OPEN`` DB rows against the positions IB actually reports.
+
+    Closes the last hole in the status lifecycle. Every other path keys off an
+    order id: `get_pending_orders` only returns SUBMITTED + PENDING_CLOSE, and the
+    orphan-fill path only sees permIds present in *today's* `ib.fills()`. So a row
+    that reaches OPEN and then loses its exit fill (missed `record`, then a missed
+    `reconcile` the next day) is never examined again by anything — it stays OPEN
+    forever while IB holds nothing, and the next breakout on that symbol opens a
+    *second* OPEN row. That is how 22 phantom positions and 14 duplicated symbols
+    accumulated in prod between 2026-05 and 2026-07.
+
+    Two outcomes, both conservative:
+    - symbol not held at IB at all -> every OPEN row for it is a phantom, flagged
+      ``NEEDS_REVIEW``. We never invent an exit price; a human resolves it.
+    - symbol held but share counts disagree -> **warn only**. Could be a legitimate
+      PARTIALLY_FILLED sibling row (excluded from this count) or a manual trade, so
+      auto-mutating would be wrong.
+    """
+    open_trades = trade_repo.get_open_trades()
+    if not open_trades:
+        return
+
+    held_qty: dict[str, int] = {}
+    for p in positions:
+        if p.quantity > 0:
+            held_qty[p.symbol] = held_qty.get(p.symbol, 0) + p.quantity
+
+    # Guard: an IB read that returns zero positions while the DB tracks OPEN rows
+    # is far more likely a failed/racing account read than a genuine flat account.
+    # Flagging every row on that reading would be catastrophic and irreversible,
+    # so refuse to sweep and surface it as an error instead.
+    if not held_qty:
+        msg = (
+            f"drift sweep skipped: IB reported 0 long positions while "
+            f"{len(open_trades)} OPEN row(s) exist -- treating as a failed "
+            f"position read, not a flat account. Investigate before trusting "
+            f"today's snapshot."
+        )
+        result.errors.append(msg)
+        logger.error(msg)
+        return
+
+    by_symbol: dict[str, list] = defaultdict(list)
+    for t in open_trades:
+        by_symbol[t.symbol].append(t)
+
+    for symbol in sorted(by_symbol):
+        rows = by_symbol[symbol]
+        ib_qty = held_qty.get(symbol, 0)
+
+        if ib_qty == 0:
+            for t in rows:
+                reason = (
+                    f"OPEN row not held at IB (entry {t.entry_price} x "
+                    f"{t.filled_quantity} on "
+                    f"{t.entry_time:%Y-%m-%d} ) -- exit fill unrecoverable from "
+                    f"ib.fills(); resolve manually via the override CLI"
+                )
+                trade_repo.mark_needs_review(t.id, reason)
+                result.open_rows_flagged += 1
+                logger.error(
+                    "DRIFT trade_id=%d %s OPEN in DB but not held at IB "
+                    "-> NEEDS_REVIEW",
+                    t.id, symbol,
+                )
+            continue
+
+        db_qty = sum((t.filled_quantity or 0) for t in rows)
+        if db_qty != ib_qty:
+            result.qty_divergences += 1
+            msg = (
+                f"qty divergence {symbol}: {len(rows)} OPEN row(s) total "
+                f"{db_qty} share(s), IB holds {ib_qty}"
+            )
+            result.errors.append(msg)
+            logger.error(msg)
 
 
 def _is_stale(submitted: datetime | None, today: date) -> bool:

@@ -14,6 +14,10 @@ config/config.local.toml
 /logs/
 /reports/
 /backtests/
+# Pre-wipe archives from scripts/reset_paper_db.py. The .db files are already
+# covered below, but the .sha256 sidecars are not -- and anchoring keeps this
+# root-only (see the CLAUDE.md /data/ gotcha).
+/backups/
 *.db
 
 # Claude Code local tooling/settings (not project source)

@@ -392,3 +392,32 @@ test_broker.py,TestGetTodayOrderRefs,test_collects_refs_from_open_orders_and_fil
 test_broker.py,TestGetTodayOrderRefs,test_blank_refs_excluded,get_today_order_refs drops blank refs
 test_cli_crash_alert.py,TestLiveModeBanner,test_live_mode_logs_warning,Live mode emits a LIVE TRADING MODE warning banner
 test_cli_crash_alert.py,TestLiveModeBanner,test_paper_mode_no_banner,Paper mode stays silent (no banner)
+test_reconcile_drift.py,TestOrphanSellRecovery,test_orphan_sell_closes_matching_open_row,Orphan SELL fill matched to an OPEN row by symbol and closed with row-basis P&L
+test_reconcile_drift.py,TestOrphanSellRecovery,test_recovered_sell_not_flagged_by_drift_sweep,Recovery precedes the sweep so a row is never handled twice
+test_reconcile_drift.py,TestOrphanSellRecovery,test_orphan_sell_with_no_open_row_still_warns,SELL fill with no OPEN row for the symbol stays warn-only
+test_reconcile_drift.py,TestOrphanSellRecovery,test_fifo_picks_oldest_open_row,Duplicate OPEN rows close oldest-first for deterministic matching
+test_reconcile_drift.py,TestOrphanSellRecovery,test_partial_orphan_sell_marks_partially_filled,Partial orphan SELL lands on PARTIALLY_FILLED not CLOSED
+test_reconcile_drift.py,TestOpenRowDriftSweep,test_open_row_not_held_at_ib_is_flagged,OPEN row absent from IB positions becomes NEEDS_REVIEW with no invented exit price
+test_reconcile_drift.py,TestOpenRowDriftSweep,test_held_row_is_left_alone,A genuinely held OPEN row is untouched by the sweep
+test_reconcile_drift.py,TestOpenRowDriftSweep,test_duplicate_open_rows_report_qty_divergence,Share-count mismatch is reported warn-only and mutates nothing
+test_reconcile_drift.py,TestOpenRowDriftSweep,test_empty_ib_positions_does_not_mass_flag,Zero IB positions is treated as a failed read not a flat account
+test_reconcile_drift.py,TestOpenRowDriftSweep,test_sweep_noop_when_no_open_rows,Sweep is a clean no-op with no OPEN rows
+test_reconcile_drift.py,TestOpenRowDriftSweep,test_multiple_phantoms_all_flagged,Every phantom OPEN row is flagged not just the first
+test_reconcile_drift.py,TestNeedsReviewIsTerminal,test_flagged_row_leaves_both_scans,NEEDS_REVIEW drops out of the pending scan and the open-trades read
+test_reconcile_drift.py,TestNeedsReviewIsTerminal,test_sweep_is_idempotent,Re-running reconcile does not re-flag an already-flagged row
+test_reconcile_drift.py,TestCloseFromOpenGuards,test_refuses_non_open_status,close_from_open rejects any source status other than OPEN
+test_reconcile_drift.py,TestCloseFromOpenGuards,test_missing_trade_raises,close_from_open raises on an unknown trade id
+test_reconcile_drift.py,TestResolveNeedsReview,test_resolve_closes_with_row_basis_pnl,Manual resolution closes a flagged row with P&L from its own entry/exit prices
+test_reconcile_drift.py,TestResolveNeedsReview,test_resolve_rejects_wrong_status,resolve_needs_review refuses a row that is not NEEDS_REVIEW
+test_reconcile_drift.py,TestResolveNeedsReview,test_write_off_path_marks_cancelled,Write-off path sends a flagged row to CANCELLED
+test_reconcile_drift.py,TestResolveNeedsReview,test_get_needs_review_lists_all,get_needs_review returns every flagged row sorted by symbol
+test_preflight.py,TestHappyPath,test_all_checks_pass,"Preflight reports READY with account, positions, universe and strategies all good"
+test_preflight.py,TestHappyPath,test_shorts_and_zero_rows_excluded_from_held,Held count matches submit's longs-only definition
+test_preflight.py,TestGatewayNotReady,test_zero_net_liq_is_not_ready,Connected-but-zero-equity reads as NOT READY (Gateway mid-login)
+test_preflight.py,TestGatewayNotReady,test_account_read_exception_is_captured_not_raised,An account-read failure becomes a failed check not an exception
+test_preflight.py,TestGatewayNotReady,test_all_checks_still_run_after_an_early_failure,Every check runs so one report shows all problems at once
+test_preflight.py,TestGatewayNotReady,test_custom_min_net_liq_threshold,min_net_liquidation threshold is honoured
+test_preflight.py,TestConfigProblems,test_empty_universe_fails,Empty universe fails preflight (submit would scan nothing)
+test_preflight.py,TestConfigProblems,test_no_strategies_fails,No enabled strategies fails preflight
+test_preflight.py,TestPositionCap,test_over_cap_is_flagged,Over-cap holdings are flagged with the force-trim count
+test_preflight.py,TestPositionCap,test_at_cap_exactly_is_ok,Exactly at the cap passes

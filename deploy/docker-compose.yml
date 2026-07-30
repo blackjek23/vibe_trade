@@ -1,4 +1,22 @@
 services:
+  # Runs 15:50, ten minutes before submit. Read-only: verifies IB Gateway is up
+  # and logged in, the universe loads, and at least one strategy is enabled.
+  # Reports success as well as failure so that silence is the anomaly.
+  preflight:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["preflight", "--config", "/config/config.toml"]
+    environment:
+      - TZ=Asia/Jerusalem
+    volumes:
+      - vibe-data:/app/data
+      - ./logs:/app/logs
+      - ./config:/config:ro
+    env_file: .env
+    network_mode: host
+    profiles: ["job"]
+
   submit:
     build:
       context: ..

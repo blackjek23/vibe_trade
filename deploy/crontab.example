@@ -4,9 +4,36 @@
 #
 # Install: crontab deploy/crontab.example
 # Verify:  crontab -l
+#
+# RECORD TIMING — read before changing (corrected 2026-07-30):
+# The US open is 16:30 Asia/Jerusalem (09:30 ET = 13:30 UTC; both zones are on
+# summer time together for most of the year). Market orders placed at 16:00 fill
+# AT the open, so their executions first appear in `ib.fills()` at ~16:30:0x.
+#
+# `record` reads `ib.fills()`. Running it at 16:25 — as this file said until
+# 2026-07-30, and as ARCHITECTURE_V2.md still justified as "a 5-minute buffer
+# before market open" — means it runs 5 minutes BEFORE any fill exists and
+# records nothing. The live box has been on 16:35 all along, which is why it
+# worked; the repo just never said so.
+#
+# 16:35 leaves 5 minutes of slack after the open. Reconcile at 23:30 back-fills
+# anything record still misses (orphan BUY and orphan SELL recovery), so record
+# is a fast-path, not the only path.
+#
+# DST caveat: Israel leaves summer time in late October, the US in early
+# November. In that ~1-week gap the US open lands at 17:30 Israel time and even
+# 16:35 is too early — record will no-op those days and reconcile will pick the
+# fills up. Nothing breaks, but don't be surprised by it.
+
+# Preflight — 10 minutes before submit. Verifies IB Gateway is up and logged in,
+# the universe loads, and a strategy is enabled. Read-only. Telegrams on success
+# AND failure, so silence (rather than a red message) is what should worry you.
+# 10 minutes is enough to `systemctl restart ib-gateway` and re-run before 16:00.
+# See ibgateway/README.md for the systemd + IBC setup that makes this rarely fire.
+50 15 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm preflight >> ./logs/cron.log 2>&1
 
 00 16 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm submit   >> ./logs/cron.log 2>&1
-25 16 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm record   >> ./logs/cron.log 2>&1
+35 16 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm record   >> ./logs/cron.log 2>&1
 30 23 * * 1-5  cd /opt/vibe-trade/deploy && docker compose run --rm reconcile >> ./logs/cron.log 2>&1
 
 # Weekly report — Saturday 09:00. Renders reports/<date>-weekly.png + Telegram.

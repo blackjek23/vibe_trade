@@ -1225,6 +1225,175 @@ async def _run_cancel_pending_cli(config, symbol: str | None) -> None:
 
 
 @app.command()
+def preflight(
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+    quiet: bool = typer.Option(
+        False, "--quiet", help="Only notify on failure (skip the daily heartbeat)"
+    ),
+) -> None:
+    """Verify today's submit can work. Run at 15:50, 10 min before submit.
+
+    Read-only: no orders, no DB writes. Exits non-zero if anything is not ready,
+    so cron surfaces it. Sends Telegram on failure and (unless --quiet) on
+    success too, so that silence becomes the anomaly rather than just one more
+    failure message.
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    _run_with_crash_alert("preflight", config, _run_preflight_cli, quiet=quiet)
+
+
+async def _run_preflight_cli(config, *, quiet: bool = False) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.data.universe import load_universe
+    from vibe_trade.jobs.preflight import run_preflight
+    from vibe_trade.jobs.submit import SUBMIT_CLIENT_ID
+    from vibe_trade.strategy.registry import build_strategies
+
+    # Connect as submit's client so we exercise the exact identity submit will
+    # use: if client_id 1 is already taken by a stuck process, we find out now.
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = SUBMIT_CLIENT_ID
+    broker = IBBroker(broker_config, mode=config.general.mode)
+    notifier = _get_notifier(config)
+
+    universe = load_universe(config.universe)
+    strategies = build_strategies(config.strategies, config.risk.pct_per_position)
+
+    await broker.connect()
+    try:
+        result = await run_preflight(
+            broker=broker,
+            universe=universe,
+            strategies=strategies,
+            max_positions=config.risk.max_open_positions,
+        )
+    finally:
+        await broker.disconnect()
+
+    table = Table(title="Preflight")
+    table.add_column("Check", style="cyan")
+    table.add_column("")
+    table.add_column("Detail", overflow="fold")
+    for c in result.checks:
+        table.add_row(
+            c.name,
+            "[green]OK[/green]" if c.ok else "[red]FAIL[/red]",
+            c.detail,
+        )
+    console.print(table)
+
+    if result.ok:
+        console.print("[bold green]READY[/bold green] - submit can run at 16:00")
+        if not quiet:
+            await notifier.notify_summary(
+                f"[PREFLIGHT] {date.today().isoformat()} READY - "
+                f"net_liq=${result.net_liquidation:,.2f}, "
+                f"{result.held_count} held, universe={result.universe_size}, "
+                f"strategies={','.join(result.strategy_names)}"
+            )
+        return
+
+    detail = "; ".join(f"{c.name}: {c.detail}" for c in result.failures)
+    console.print(f"[bold red]NOT READY[/bold red] - {detail}")
+    await notifier.notify_error(
+        f"[PREFLIGHT] {date.today().isoformat()} NOT READY - {detail}\n"
+        f"Submit runs at 16:00. Fix before then."
+    )
+    raise typer.Exit(1)
+
+
+@app.command(name="review-trades")
+def review_trades(
+    resolve: Optional[int] = typer.Option(
+        None, "--resolve", help="Trade id to resolve (see the listing for ids)"
+    ),
+    exit_price: Optional[float] = typer.Option(
+        None, "--exit-price", help="Actual exit price; closes the row and computes P&L"
+    ),
+    write_off: bool = typer.Option(
+        False, "--write-off",
+        help="Mark the row CANCELLED instead — the position was never really ours",
+    ),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """List or resolve NEEDS_REVIEW trades. DB-only, never touches IB.
+
+    Reconcile's drift sweep parks a row here when IB doesn't hold the symbol and
+    the exit fill is gone from `ib.fills()` (only the current session is returned,
+    so a missed reconcile day loses it permanently). It deliberately refuses to
+    invent an exit price, which is what this command supplies.
+
+    \b
+    vibe-trade review-trades                                  # list them
+    vibe-trade review-trades --resolve 27 --exit-price 415.50  # close with real price
+    vibe-trade review-trades --resolve 27 --write-off          # never a real position
+    """
+    config = load_config(config_path)
+    _setup_logging(config.general.log_level, config.general.log_file)
+    session_factory = init_db(config.general.db_path)
+
+    from datetime import datetime
+
+    from vibe_trade.db.repository import TradeRepository
+
+    with session_factory() as session:
+        repo = TradeRepository(session)
+
+        if resolve is None:
+            rows = repo.get_needs_review()
+            if not rows:
+                console.print("[green]No trades need review.[/green]")
+                return
+            table = Table(title="Trades Needing Review")
+            table.add_column("id", justify="right", style="cyan")
+            table.add_column("Symbol")
+            table.add_column("Qty", justify="right")
+            table.add_column("Entry", justify="right")
+            table.add_column("Entered")
+            table.add_column("Why", overflow="fold")
+            for t in rows:
+                table.add_row(
+                    str(t.id), t.symbol, str(t.filled_quantity),
+                    f"{t.entry_price:.2f}" if t.entry_price else "-",
+                    t.entry_time.strftime("%Y-%m-%d") if t.entry_time else "-",
+                    t.notes or "",
+                )
+            console.print(table)
+            console.print(
+                "\n[dim]Resolve with: vibe-trade review-trades --resolve <id> "
+                "--exit-price <px>[/dim]"
+            )
+            return
+
+        if write_off:
+            trade = repo.mark_cancelled(
+                resolve, "manually written off — position never held at IB"
+            )
+            console.print(
+                f"[yellow]Trade {trade.id} {trade.symbol} -> CANCELLED "
+                f"(written off)[/yellow]"
+            )
+            return
+
+        if exit_price is None:
+            console.print(
+                "[red]--exit-price is required to resolve "
+                "(or pass --write-off).[/red]"
+            )
+            raise typer.Exit(2)
+
+        trade = repo.resolve_needs_review(
+            resolve, exit_price=exit_price, exit_time=datetime.now()
+        )
+        console.print(
+            f"[green]Trade {trade.id} {trade.symbol} -> CLOSED[/green]  "
+            f"{trade.entry_price:.2f} -> {exit_price:.2f} x{trade.filled_quantity}  "
+            f"P&L ${trade.pnl:+,.2f} ({trade.pnl_pct:+.2f}%)"
+        )
+
+
+@app.command()
 def panic(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
     confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),

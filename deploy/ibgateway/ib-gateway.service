@@ -1,0 +1,45 @@
+[Unit]
+# IB Gateway, kept alive by systemd and logged in by IBC.
+#
+# Why this exists: on 10 trading days between 2026-05 and 2026-07 no vibe-trade
+# job ran because Gateway wasn't started by hand. The bot alerted correctly each
+# time and the alerts weren't acted on. This removes the human step.
+Description=IB Gateway (via IBC)
+Documentation=https://github.com/IbcAlpha/IBC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vibe
+Group=vibe
+
+# Credentials live ONLY here: root-owned, chmod 600, outside the repo.
+#   /etc/vibe-trade/ibc.env
+#     IB_USER=your_paper_username
+#     IB_PASSWORD=your_paper_password
+#     TRADING_MODE=paper
+# Never put them in config.ini if you can avoid it — that file is world-readable
+# by default and easy to copy into a repo by accident.
+EnvironmentFile=/etc/vibe-trade/ibc.env
+
+# Gateway is a Java GUI app: it needs a display even headless. xvfb-run supplies
+# a virtual one. (apt install xvfb)
+ExecStart=/usr/bin/xvfb-run --auto-servernum /opt/ibc/gatewaystart.sh \
+    --mode=${TRADING_MODE} \
+    --user=${IB_USER} \
+    --pw=${IB_PASSWORD} \
+    --inline
+
+# The whole point: if Gateway dies, bring it back without anyone noticing.
+Restart=always
+RestartSec=30
+
+# Gateway can take ~60s to come up and log in before the API port answers.
+TimeoutStartSec=180
+
+StandardOutput=append:/var/log/vibe-trade/ibgateway.log
+StandardError=append:/var/log/vibe-trade/ibgateway.log
+
+[Install]
+WantedBy=multi-user.target

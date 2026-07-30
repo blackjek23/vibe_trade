@@ -203,6 +203,134 @@ class TradeRepository:
         self.session.commit()
         return trade
 
+    def close_from_open(
+        self,
+        trade_id: int,
+        *,
+        exit_price: float,
+        filled_quantity: int,
+        exit_time: datetime,
+        exit_perm_id: int,
+        exit_ib_order_id: int | None = None,
+        ib_realized_pnl: float | None = None,
+        reason: str = "",
+    ) -> Trade:
+        """Close an ``OPEN`` trade directly from fill data, skipping PENDING_CLOSE.
+
+        Needed when a SELL filled at IB but no ``record`` run ever flipped the row
+        to PENDING_CLOSE (a missed 16:25 job). ``confirm_close_fill`` refuses that
+        transition by design, so this is the recovery door — used only by
+        reconcile's orphan-SELL matching.
+
+        **P&L basis:** computed from this row's own ``entry_price`` and
+        ``exit_price``, so the stored ``pnl`` always reconciles against the prices
+        in the same row. IB's ``realizedPNL`` (account-level average-cost basis) is
+        recorded in ``notes`` for traceability rather than in ``pnl`` — mixing the
+        two bases is what made `pnl` contradict its own prices on re-bought
+        symbols. See PROJECT_MASTER_STATE for the accounting-policy note.
+        """
+        trade = self.session.get(Trade, trade_id)
+        if trade is None:
+            raise ValueError(f"Trade {trade_id} not found")
+        if trade.status != "OPEN":
+            raise ValueError(
+                f"Trade {trade_id} cannot close from status={trade.status}"
+            )
+
+        expected = trade.filled_quantity or trade.requested_quantity or 0
+        entry_price = trade.entry_price or 0.0
+        basis = entry_price * filled_quantity
+        pnl = (exit_price - entry_price) * filled_quantity
+        pnl_pct = (pnl / basis * 100.0) if basis > 0 else 0.0
+
+        trade.exit_price = exit_price
+        trade.exit_time = exit_time
+        trade.exit_perm_id = exit_perm_id
+        trade.exit_ib_order_id = exit_ib_order_id
+        trade.filled_quantity = filled_quantity
+        trade.pnl = pnl
+        trade.pnl_pct = pnl_pct
+        trade.status = "CLOSED" if filled_quantity == expected else "PARTIALLY_FILLED"
+
+        note = reason or "recovered orphan SELL fill"
+        if ib_realized_pnl is not None:
+            note += f" (IB realizedPNL={ib_realized_pnl:+.2f})"
+        trade.notes = note
+
+        self.session.commit()
+        return trade
+
+    def mark_needs_review(self, trade_id: int, reason: str) -> Trade:
+        """Park a row that reconcile cannot resolve without human input.
+
+        Used for an ``OPEN`` row whose symbol is no longer held at IB and whose
+        exit fill is gone from ``ib.fills()`` (only the current session is
+        returned, so a missed reconcile day loses it permanently). We refuse to
+        invent an exit price — the row is flagged and excluded from the pending
+        scan so it stops silently masquerading as a live position.
+        """
+        trade = self.session.get(Trade, trade_id)
+        if trade is None:
+            raise ValueError(f"Trade {trade_id} not found")
+        trade.status = "NEEDS_REVIEW"
+        trade.notes = reason
+        self.session.commit()
+        return trade
+
+    def get_needs_review(self) -> list[Trade]:
+        """Rows parked by reconcile's drift sweep, awaiting a human decision."""
+        return (
+            self.session.query(Trade)
+            .filter(Trade.status == "NEEDS_REVIEW")
+            .order_by(Trade.symbol.asc(), Trade.id.asc())
+            .all()
+        )
+
+    def resolve_needs_review(
+        self,
+        trade_id: int,
+        *,
+        exit_price: float,
+        exit_time: datetime,
+        note: str = "",
+    ) -> Trade:
+        """Close a ``NEEDS_REVIEW`` row using a human-supplied exit price.
+
+        P&L is computed from the row's own entry/exit prices — the same basis rule
+        as `close_from_open`, so a resolved row reconciles against its own numbers.
+        """
+        trade = self.session.get(Trade, trade_id)
+        if trade is None:
+            raise ValueError(f"Trade {trade_id} not found")
+        if trade.status != "NEEDS_REVIEW":
+            raise ValueError(
+                f"Trade {trade_id} is {trade.status}, not NEEDS_REVIEW"
+            )
+        qty = trade.filled_quantity or 0
+        entry_price = trade.entry_price or 0.0
+        basis = entry_price * qty
+        trade.exit_price = exit_price
+        trade.exit_time = exit_time
+        trade.pnl = (exit_price - entry_price) * qty
+        trade.pnl_pct = (trade.pnl / basis * 100.0) if basis > 0 else 0.0
+        trade.status = "CLOSED"
+        trade.notes = note or f"manually resolved at {exit_price}"
+        self.session.commit()
+        return trade
+
+    def find_open_by_symbol(self, symbol: str) -> Trade | None:
+        """Oldest ``OPEN`` row for a symbol (FIFO), or None.
+
+        FIFO matches how IB reports realized P&L on a partial unwind, and gives a
+        deterministic target when a symbol wrongly has more than one OPEN row.
+        """
+        return (
+            self.session.query(Trade)
+            .filter(Trade.status == "OPEN", Trade.symbol == symbol)
+            .order_by(Trade.entry_time.asc(), Trade.id.asc())
+            .first()
+        )
+
     # ------------------------------------------------------------------- reads
 
     def get_open_trades(self) -> list[Trade]:

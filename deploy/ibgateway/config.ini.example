@@ -1,0 +1,45 @@
+# IBC configuration for vibe-trade — copy to /opt/ibc/config.ini
+#
+# Credentials are deliberately BLANK here. The systemd unit passes them as
+# --user/--pw from /etc/vibe-trade/ibc.env (root-owned, chmod 600), so this file
+# never holds a secret and is safe to keep alongside the repo.
+#
+# Only the settings that matter for unattended operation are listed. Everything
+# else can stay at the IBC default. Check key names against the config.ini
+# shipped with the IBC version you downloaded — they do change between majors.
+
+# --- login -------------------------------------------------------------------
+IbLoginId=
+IbPassword=
+TradingMode=paper
+
+# --- unattended operation ----------------------------------------------------
+# Answer Gateway's dialogs instead of waiting for a human. Without these,
+# Gateway sits on a modal dialog forever and the API port never opens — which
+# looks exactly like "Gateway is down" to preflight.
+AcceptNonBrokerageAccountWarning=yes
+AcceptIncomingConnectionAction=accept
+ExistingSessionDetectedAction=primary
+DismissPasswordExpiryWarning=yes
+DismissNSEComplianceNotice=yes
+
+# Keep the API open and writable — vibe-trade places orders.
+ReadOnlyApi=no
+
+# --- the daily re-auth problem ----------------------------------------------
+# IB force-logs-out once a day. Gateway's own "auto restart" reconnects WITHOUT
+# needing credentials again (good for about a week before a full re-login).
+# 05:00 is well clear of the 16:00-23:30 Jerusalem trading window.
+#
+# Set this and leave IbAutoClosedown=no, otherwise Gateway shuts down mid-week
+# and systemd restarts it into a login it can't complete unattended.
+AutoRestartTime=05:00
+IbAutoClosedown=no
+
+# --- 2FA WARNING -------------------------------------------------------------
+# This works unattended for PAPER accounts (username + password only).
+#
+# A LIVE account with IBKR Mobile two-factor CANNOT be fully automated: each
+# login needs a push approval on your phone. If you ever flip
+# `mode = "live"` in config.toml, expect to approve logins by hand, or move to
+# IB's dedicated FIX/API arrangements. Do not assume this file keeps working.
