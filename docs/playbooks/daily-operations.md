@@ -1,8 +1,8 @@
 # vibe_trade — Operations Runbook
 
 > Day-to-day operating guide for the swing-trading bot. For one-time deploy/setup
-> (Docker, cron install, host config) see [`deploy/README.md`](../deploy/README.md).
-> For project state and history see [`PROJECT_MASTER_STATE.md`](../PROJECT_MASTER_STATE.md).
+> (Docker, cron install, host config) see [`deployment.md`](deployment.md).
+> For project state and history see [`PROJECT_MASTER_STATE.md`](../../PROJECT_MASTER_STATE.md).
 
 All times are **Asia/Jerusalem**. US market opens 16:30 local, closes 23:00 local.
 
@@ -15,7 +15,7 @@ Four OS-scheduled jobs, each short-lived (no long-running process). Cron drives 
 | Time  | Command                  | Client ID | What it does                                                        |
 | ----- | ------------------------ | --------- | ------------------------------------------------------------------ |
 | 16:00 | `vibe-trade submit`      | 1         | Exits (strategy-scoped SELLs) → force-trim → entries (priority BUYs). Places market orders. **No DB writes.** |
-| 16:25 | `vibe-trade record`      | 2         | Reads `ib.fills()`, persists BUYs as SUBMITTED, flips OPEN→PENDING_CLOSE. Stamps `strategy_name` from each order's `orderRef`. |
+| 16:35 | `vibe-trade record`      | 2         | Reads `ib.fills()`, persists BUYs as SUBMITTED, flips OPEN→PENDING_CLOSE. Stamps `strategy_name` from each order's `orderRef`. |
 | 23:30 | `vibe-trade reconcile`   | 3         | Finalizes statuses (FILLED/CANCELLED/PARTIAL) + portfolio snapshot + daily P&L. |
 | Sat 09:00 | `vibe-trade report-weekly` | 8     | Renders the last-7-day dashboard PNG and sends it to Telegram.     |
 
@@ -147,7 +147,7 @@ strategies accordingly.
 ## 7. Invariants (don't break without cause)
 
 - **Positions source at 16:00 = IB**, not the DB. DB is a history mirror.
-- **Submit writes nothing to the DB.** Record (16:25) is the persistence step.
+- **Submit writes nothing to the DB.** Record (16:35) is the persistence step.
 - **Strategies evaluate yesterday's closed daily bar** (`df.iloc[-1]`). No intraday, no lookahead.
 - **One order per ticker per day.**
 - **Cross-process dedup on `permId`**, not `orderId` (orderId resets to 0 across processes).

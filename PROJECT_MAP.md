@@ -14,7 +14,7 @@ Three OS-cron-triggered CLI jobs per trading day. Each is short-lived, does one 
 flowchart TD
     subgraph Cron["OS Cron (Asia/Jerusalem)"]
         CRON_S["16:00 — vibe-trade submit"]
-        CRON_R["16:25 — vibe-trade record"]
+        CRON_R["16:35 — vibe-trade record"]
         CRON_X["23:30 — vibe-trade reconcile"]
     end
 
@@ -75,7 +75,7 @@ Mon 16:00  vibe-trade submit  (client_id=1)
            IB:  read positions, place market orders
            DB:  no writes (V2 invariant)
 
-Mon 16:25  vibe-trade record  (client_id=2)
+Mon 16:35  vibe-trade record  (client_id=2)
            IB:  read ib.fills() — execution data with permId
            DB:  insert SUBMITTED rows (BUYs) /
                 flip OPEN -> PENDING_CLOSE (SELLs)
@@ -92,7 +92,7 @@ Mon 23:30  vibe-trade reconcile  (client_id=3)
 Tue 00:00  Idle until next 16:00
 ```
 
-**Cross-process key fact:** between submit (16:00) and record (16:25), processes restart. `ib.trades()` returns the orders but `order.totalQuantity` and `orderId` are reset to 0. Only `permId` survives. Record + reconcile dedup on `permId` and pull quantities from `ib.fills()`. Verified live 2026-04-27.
+**Cross-process key fact:** between submit (16:00) and record (16:35), processes restart. `ib.trades()` returns the orders but `order.totalQuantity` and `orderId` are reset to 0. Only `permId` survives. Record + reconcile dedup on `permId` and pull quantities from `ib.fills()`. Verified live 2026-04-27.
 
 ---
 
@@ -370,7 +370,7 @@ Removed in Session E: `TrailingStopConfig`, `MACrossoverConfig`, `RSIMeanRevertC
 | File | Function | Trigger |
 |---|---|---|
 | `jobs/submit.py` | `run_submit(broker, strategy, data_provider, risk_manager, universe, ...)` | cron 16:00 |
-| `jobs/record.py` | `run_record(broker, repo, strategy_name="donchian", now=None)` | cron 16:25 |
+| `jobs/record.py` | `run_record(broker, repo, strategy_name="donchian", now=None)` | cron 16:35 |
 | `jobs/reconcile.py` | `run_reconcile(broker, trade_repo, snap_repo, daily_repo, today=None)` | cron 23:30 |
 
 Each is broker-injected for testability — tests pass `MockBroker`. Constants `SUBMIT_CLIENT_ID=1`, `RECORD_CLIENT_ID=2`, `RECONCILE_CLIENT_ID=3` live in `jobs/submit.py`.
@@ -437,7 +437,7 @@ Standalone scripts that hit live IB paper for shape discovery + DB writes. Not p
 | Command | Phase | Purpose |
 |---|---|---|
 | `vibe-trade submit` | V2 daily | Place market orders (16:00). No DB writes. |
-| `vibe-trade record` | V2 daily | Persist today's fills (16:25). |
+| `vibe-trade record` | V2 daily | Persist today's fills (16:35). |
 | `vibe-trade reconcile` | V2 daily | Finalize statuses + snapshot (23:30). |
 | `vibe-trade backtest` | Validation | Simulate Donchian against historical data. |
 | `vibe-trade refresh-sp100` | Maintenance | Regenerate top-100 by market cap (rewrites `data/sp100_top.py`). |

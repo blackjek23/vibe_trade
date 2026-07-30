@@ -4,13 +4,13 @@ A Python swing-trading bot for Interactive Brokers. Trades the S&P 500 universe 
 
 ## Highlights
 
-- **Three-phase daily flow** — `submit` (16:00) → `record` (16:25) → `reconcile` (23:30), Asia/Jerusalem time. No long-running process; OS cron drives timing.
+- **Three-phase daily flow** — `submit` (16:00) → `record` (16:35) → `reconcile` (23:30), Asia/Jerusalem time. No long-running process; OS cron drives timing.
 - **IB-first design** — IB account is the source of truth for positions at decision time; SQLite is a history mirror.
 - **Cross-process correct** — order/fill bookkeeping deduplicates on `permId` (survives reconnects), driven from `ib.fills()`.
 - **Backtested** — 2018–2026 on top-100 by market cap: +17.1% CAGR, Sharpe 1.14, max drawdown -20.5% (beats SPY/QQQ on Sharpe with half the drawdown).
 - **Telegram notifications** — every job reports submissions, fills, and a daily summary.
 - **Docker deployment** — single image, three compose services, host crontab; `network_mode: host` for IB Gateway.
-- **393 tests** covering broker, sizing, strategy, jobs, backtest, and reconcile flows.
+- **422 tests** covering broker, sizing, strategy, jobs, backtest, reconcile, drift-recovery and preflight flows.
 
 ## Strategy
 
@@ -24,7 +24,7 @@ A Python swing-trading bot for Interactive Brokers. Trades the S&P 500 universe 
 | Time (Asia/Jerusalem) | Command                | Client ID | Role                                                                    |
 | --------------------- | ---------------------- | --------- | ----------------------------------------------------------------------- |
 | 16:00                 | `vibe-trade submit`    | 1         | Read positions from IB, exits then entries, submit market orders. **No DB writes.** |
-| 16:25                 | `vibe-trade record`    | 2         | Read `ib.fills()`, persist as `SUBMITTED` / flip OPEN→`PENDING_CLOSE`.  |
+| 16:35                 | `vibe-trade record`    | 2         | Read `ib.fills()`, persist as `SUBMITTED` / flip OPEN→`PENDING_CLOSE`.  |
 | 23:30                 | `vibe-trade reconcile` | 3         | Finalize statuses (FILLED/CANCELLED/PARTIALLY_FILLED) + portfolio + daily P&L. |
 
 Detailed design: [docs/ARCHITECTURE_V2.md](docs/ARCHITECTURE_V2.md). Module-level map: [PROJECT_MAP.md](PROJECT_MAP.md).
@@ -55,7 +55,7 @@ src/vibe_trade/
 ├── backtest/    # data.py, engine.py, metrics.py, plot.py
 └── cli.py       # typer commands
 
-tests/           # 393 tests + TEST_REGISTRY.csv index
+tests/           # 422 tests + TEST_REGISTRY.csv index
 deploy/          # Dockerfile, docker-compose.yml, crontab.example, smoke-test.sh
 docs/            # ARCHITECTURE_V2.md, ROADMAP.md
 scratches/       # live IB-paper diagnostics + DB-write scripts (not pytest)
@@ -101,12 +101,12 @@ Environment variables (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) override TOML v
 
 ```bash
 # Tests
-.venv/Scripts/python -m pytest                  # full suite (~5s, 393 tests)
+.venv/Scripts/python -m pytest                  # full suite (~4s, 422 tests)
 .venv/Scripts/python -m pytest tests/test_donchian.py -v
 
 # Daily V2 commands (run manually or via cron)
 .venv/Scripts/python -m vibe_trade submit       # 16:00 — exits then entries
-.venv/Scripts/python -m vibe_trade record       # 16:25 — persist today's fills
+.venv/Scripts/python -m vibe_trade record       # 16:35 — persist today's fills
 .venv/Scripts/python -m vibe_trade reconcile    # 23:30 — finalize + snapshot
 
 # Backtest
@@ -137,7 +137,8 @@ docker compose run --rm submit  # one-off
 crontab crontab.example         # install Mon-Fri schedule
 ```
 
-Full guide: [`deploy/README.md`](deploy/README.md).
+Full guide: [`docs/playbooks/deployment.md`](docs/playbooks/deployment.md).
+All operational procedures: [`docs/playbooks/`](docs/playbooks/).
 
 ## Backtest results
 

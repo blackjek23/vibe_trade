@@ -8,7 +8,7 @@
 > to the paper account. You have shell access and sudo.
 >
 > **Important port note:** This bot's defaults (`config.example.toml`,
-> `deploy/README.md`) reference TWS ports (`7497` paper / `7496` live).
+> `docs/playbooks/deployment.md`) reference TWS ports (`7497` paper / `7496` live).
 > **IB Gateway uses different ports: `4002` paper / `4001` live.** Every
 > step below reflects Gateway = 4002.
 
@@ -344,8 +344,8 @@ sudo sqlite3 "$(docker volume inspect deploy_vibe-data -f '{{.Mountpoint}}')/vib
 
 ## Companion files
 
-- [`deploy/README.md`](../deploy/README.md) — original Docker setup notes (uses TWS port 7497, override to 4002)
-- [`deploy/crontab.example`](../deploy/crontab.example) — the three cron lines
-- [`deploy/smoke-test.sh`](../deploy/smoke-test.sh) — sequential test script
-- [`PROJECT_MASTER_STATE.md`](../PROJECT_MASTER_STATE.md) section 7 — short pre-flight summary
-- [`docs/ROADMAP.md`](ROADMAP.md) — Session H scope + what comes after
+- [`deployment.md`](deployment.md) — original Docker setup notes (uses TWS port 7497, override to 4002)
+- [`deploy/crontab.example`](../../deploy/crontab.example) — the three cron lines
+- [`deploy/smoke-test.sh`](../../deploy/smoke-test.sh) — sequential test script
+- [`PROJECT_MASTER_STATE.md`](../../PROJECT_MASTER_STATE.md) section 7 — short pre-flight summary
+- [`docs/ROADMAP.md`](../ROADMAP.md) — Session H scope + what comes after

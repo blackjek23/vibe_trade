@@ -66,16 +66,36 @@ Submits all orders for the day. Runs 30 min before market open so orders are que
 
 **Exits before entries** by design: frees capital before evaluating new positions.
 
-### Bot 2 — `vibe-trade record` — 16:25
+### Bot 2 — `vibe-trade record` — 16:35
 
 Records every submission from Bot 1 into the DB.
 
 - Connect to IB
-- Query today's orders via `ib.trades()`
-- For each one: insert a `Trade` row with `status=SUBMITTED`, `submitted_at=now`, `ib_order_id` set
+- Query today's fills via `ib.fills()` (**not** `ib.trades()` — order fields reset
+  to 0 across processes; see §6)
+- BUY: insert a `Trade` row with `status=SUBMITTED`. SELL: flip the matching OPEN
+  row to `PENDING_CLOSE`
 - Exit
 
-**Why 16:25** (not 16:29 as first drafted): gives a 5-minute safety buffer before market open in case IB's API is slow to reflect the submissions.
+> ⚠️ **Timing corrected 2026-07-30 — the original rationale below was wrong.**
+>
+> This section used to read *"**Why 16:25** (not 16:29 as first drafted): gives a
+> 5-minute safety buffer **before market open** in case IB's API is slow to reflect
+> the submissions."*
+>
+> That premise held only while record read *submissions* from `ib.trades()`. Once
+> it moved to `ib.fills()`, running before the open became self-defeating: the US
+> open is **16:30 Asia/Jerusalem**, market orders placed at 16:00 fill *at* the
+> open, and `ib.fills()` is empty until then. At 16:25 record reliably sees zero
+> fills.
+>
+> The live box has run **16:35** all along — that is why prod worked while the repo
+> documented a schedule that cannot. `deploy/crontab.example` is now 16:35 and
+> carries the full reasoning plus the October/November DST caveat.
+>
+> Record is a fast path, not the only one: reconcile at 23:30 back-fills orphan
+> BUY *and* orphan SELL fills, so a record no-op degrades to a later pickup rather
+> than lost data.
 
 ### Bot 3 — `vibe-trade reconcile` — 23:30
 
@@ -154,7 +174,29 @@ BUY:   SUBMITTED → OPEN              (fully filled)
 SELL:  OPEN → PENDING_CLOSE → CLOSED    (fully filled)
                             → PARTIALLY_FILLED
                             → CANCELLED (reverts to OPEN — position stays)
+
+Recovery paths (added 2026-07-30, reconcile):
+       OPEN → CLOSED / PARTIALLY_FILLED   orphan-SELL recovery: the exit filled at
+                                          IB but `record` never ran, so no row
+                                          carried its exit_perm_id. Matched by
+                                          symbol (FIFO) while the fill is still in
+                                          `ib.fills()`.
+       OPEN → NEEDS_REVIEW                drift sweep: IB does not hold the symbol
+                                          and the exit fill is gone from
+                                          `ib.fills()` (only the current session is
+                                          returned). Terminal until a human
+                                          resolves it — we never invent an exit
+                                          price.
 ```
+
+**Why `NEEDS_REVIEW` exists.** Every other transition keys off an order id:
+`get_pending_orders` returns only SUBMITTED + PENDING_CLOSE, and the orphan-fill
+path only sees permIds in *today's* fills. So a row that reached OPEN and then lost
+its exit fill (missed `record`, then a missed `reconcile` the next day) was never
+examined by anything again — it stayed OPEN while IB held nothing, and the next
+breakout on that symbol opened a *second* OPEN row. That is how 23 phantom rows and
+14 duplicated symbols accumulated in prod between 2026-05 and 2026-07. See
+`_sweep_open_rows` in `jobs/reconcile.py` and `scripts/audit_drift.py`.
 
 ### `portfolio_snapshot` table (new)
 

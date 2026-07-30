@@ -86,7 +86,7 @@ The bot's `place_order` confirmation logic in `src/vibe_trade/broker/ib_broker.p
 **Suggested fix:**
 - Commit the `TZ=Asia/Jerusalem` change to `deploy/docker-compose.yml`.
 - Update `deploy/Dockerfile` to install `tzdata` and set `ENV TZ=Asia/Jerusalem` as a default (belt + suspenders).
-- Update `deploy/README.md` and `docs/SESSION_H_LINUX_RUNBOOK.md` to mention this explicitly.
+- Update `docs/playbooks/deployment.md` and `docs/playbooks/linux-bringup.md` to mention this explicitly.
 
 **Status:** Patched on the box. Repo not yet updated.
 

@@ -4,14 +4,50 @@
 > and have everything needed to continue work. Updated at the end of every session
 > per the protocol at the bottom.
 
-**Last updated:** 2026-06-13 (Audit-hardening session — CLOSED)
-**HEAD commit:** `59597f2` Add: GitHub Actions CI + live-mode banner; lint to zero
-  (audit-session docs/backup/parity changes in the working tree, being committed.)
-**Tests:** 393 passing, 0 failing (+17 this session: late-SELL-fill recovery,
-  stale day-order resolution, permId=0 guards, longs-only count, submit
-  double-run guard, batch fetch timeout, live-mode banner). `test_report_plot`
-  still requires matplotlib (`plot` extra).
+**Last updated:** 2026-07-30 (State-evaluation session)
+**HEAD commit:** `07051c9` Docs: DB backup procedure, parity notes, RUNBOOK rows
+**Tests:** 422 passing, 0 failing (+29 this session: orphan-SELL recovery, the
+  OPEN-row drift sweep and NEEDS_REVIEW resolution in
+  `tests/test_reconcile_drift.py`; the preflight job in `tests/test_preflight.py`).
+  `test_report_plot` still requires matplotlib (`plot` extra).
 **Branch:** `main` — synced with `origin/main`.
+
+> 🔴 **Read this before anything else.** Two claims that stood in this file until
+> 2026-07-30 were wrong, and both mattered:
+>
+> 1. **"Not yet running unattended" was false.** The bot has been live-trading
+>    since **2026-05-06**. Evidence: the prod DB export in `scripts/` holds 112
+>    trades through 2026-07-29. Account went 95,528 → 95,457 (**-0.07%**) over the
+>    window, max DD -5.06%; of 25 closed trades only 2 were winners *by price*
+>    (against a 44% backtested win rate) — though with a 62-day average hold the
+>    closed set is structurally loser-heavy at 3 months, so 25 trades settles
+>    nothing either way.
+> 2. **10 trading days had no run at all** — IB Gateway wasn't running (confirmed by
+>    the user). Verified benign: **zero** BUYs and **zero** SELLs were submitted on
+>    every one of those dates, so nothing was placed and nothing was lost but
+>    opportunity.
+>
+>    **Detection was never the problem.** `_run_with_crash_alert` fired a
+>    `[CRITICAL]` Telegram on every failed job and the user confirms receiving them
+>    — roughly 24 alerts across 8 days. More alerting would not have helped; a
+>    stream of red messages is easy to stop reading. The fix taken was to remove the
+>    human step (`deploy/ibgateway/` — systemd + IBC keep Gateway up and restart it
+>    if it dies) and to add `vibe-trade preflight` at 15:50, which reports **success
+>    as well as failure** so that *silence* becomes the anomaly.
+>
+> **Correction to an earlier reading of this same evidence:** those outage days were
+> first assumed to be the cause of the DB drift. They are not. All 83 `OPEN` rows
+> have `exit_submitted_at = NULL` while all 29 closed/partial rows have it set — so
+> `record` never saw a SELL fill for the phantoms, their exits reached `reconcile`
+> as orphan fills, and the **old warn-only orphan-SELL path counted them and threw
+> them away**. That was a code bug, now fixed (`orphan_sells_recovered` +
+> `_sweep_open_rows`), not an operator error.
+>
+> Run `python scripts/audit_drift.py <db>` for the current damage report. As of the
+> 2026-07-30 export: 23 phantom OPEN rows, 14 duplicated symbols, 3 rows whose
+> `pnl` contradicts their own prices (all three — CSCO, CAT, AAPL — are symbols that
+> were re-bought, which is exactly the predicted basis divergence), and two ledgers
+> disagreeing by $2,878.
 
 ---
 
@@ -19,14 +55,15 @@
 
 ### What this is
 
-A Python stock trading bot for Interactive Brokers. **Swing trading on daily bars, S&P 500 universe, runs as three short OS-scheduled jobs per day.** Built end-to-end against IB paper. Not yet validated by backtest, not yet running unattended.
+A Python stock trading bot for Interactive Brokers. **Swing trading on daily bars, S&P 500 universe, runs as three short OS-scheduled jobs per day.** Built end-to-end against IB paper and **running unattended since 2026-05-06**. Backtest validation is *withdrawn* — see §7.
 
 ### Three-phase architecture (V2 — current)
 
 | Time (Asia/Jerusalem) | Command                | Client ID | Role                                                                  |
 | --------------------- | ---------------------- | --------- | --------------------------------------------------------------------- |
+| 15:50                 | `vibe-trade preflight` | 1         | Verify Gateway is up + logged in, universe loads, a strategy is on. Read-only. |
 | 16:00                 | `vibe-trade submit`    | 1         | Exits then entries. Places market orders. **No DB writes.**           |
-| 16:25                 | `vibe-trade record`    | 2         | Read `ib.fills()`, persist as SUBMITTED rows / flip OPEN→PENDING_CLOSE.|
+| 16:35                 | `vibe-trade record`    | 2         | Read `ib.fills()`, persist as SUBMITTED rows / flip OPEN→PENDING_CLOSE. **Must be after the 16:30 US open** — see crontab.example. |
 | 23:30                 | `vibe-trade reconcile` | 3         | Finalize statuses + portfolio_snapshot + daily_pnl with real counts.  |
 
 Cron drives timing. Jobs are short-lived; no long-running process.
@@ -50,18 +87,19 @@ src/vibe_trade/
 ├── config.py        pydantic config + load_config
 ├── data/            yfinance provider, SP500 universe, sp100_top static list
 ├── db/              SQLAlchemy models + repositories + engine
-├── jobs/            submit.py, record.py, reconcile.py (V2 jobs)
+├── jobs/            preflight.py, submit.py, record.py, reconcile.py, override.py
 ├── notify/          Telegram + console (currently only used by panic)
 ├── risk/            manager.py, position_sizer.py, panic.py
 ├── strategy/        base.py, examples/donchian.py
 ├── backtest/        data.py, engine.py, metrics.py, plot.py
 └── cli.py           typer commands
 
-tests/               393 tests across all modules + TEST_REGISTRY.csv index
+tests/               422 tests across all modules + TEST_REGISTRY.csv index
 docs/                ARCHITECTURE_V2.md, ROADMAP.md
 scratches/           live IB-paper diagnostics + DB-write scripts (not pytest)
 config/              config.example.toml
-deploy/              Dockerfile, docker-compose.yml, crontab.example, smoke-test.sh, README.md
+deploy/              Dockerfile, docker-compose.yml, crontab.example, smoke-test.sh, README.md,
+                     ibgateway/ (systemd + IBC so Gateway starts itself)
 ```
 
 ---
@@ -196,7 +234,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 
 # Daily V2 commands (per cron schedule, can also run manually)
 .venv/Scripts/python -m vibe_trade submit            # 16:00 — exits then entries
-.venv/Scripts/python -m vibe_trade record            # 16:25 — persist today's fills
+.venv/Scripts/python -m vibe_trade record            # 16:35 — persist today's fills
 .venv/Scripts/python -m vibe_trade reconcile         # 23:30 — finalize + snapshot
 
 # Backtest (validation)
@@ -219,7 +257,7 @@ Detailed roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). Summary:
 .venv/Scripts/python scratches/scratch_positions.py  # data-pull, safe anytime
 .venv/Scripts/python scratches/scratch_reconcile.py  # writes to data/test_paper.db
 
-# Docker deployment (Linux prod — see deploy/README.md)
+# Docker deployment (Linux prod — see docs/playbooks/deployment.md)
 cd deploy && docker compose build                    # build image
 cd deploy && docker compose run --rm submit          # run one job
 cd deploy && ./smoke-test.sh                         # run all three sequentially
@@ -242,16 +280,63 @@ cd deploy && ./smoke-test.sh                         # run all three sequentiall
 
 ## 7. Session Hand-off — start here next time
 
+### Plan of record (set 2026-07-30)
+
+| When | What |
+|---|---|
+| **August 2026** | Rotate the Telegram token. **Backtest `donchian` at `0.018/50` with 53 bps and 82 bps friction** — this is the decision instrument and it runs offline. Deploy `deploy/ibgateway/`. Decide the September strategy pool on evidence. |
+| **2026-09-01** | Reset the paper account (`docs/playbooks/paper-reset.md`) |
+| **Sept → Dec** | Clean run. Weekly `audit_drift.py`, monthly `measure_slippage.py` |
+| **January 2027** | Go / no-go on `mode = "live"` against the gates in `docs/playbooks/go-live-criteria.md` |
+
+**The four-month paper run cannot answer whether the strategy is profitable.** At
+~8.3 closed trades/month it yields ~35 trades; distinguishing the edge from noise at
+2 SE needs **218–345** (26–41 months). Its job is *operational* validation plus
+*friction measurement* — both answerable in weeks. Profitability comes from the
+backtest, which has 1,300+ trades.
+
+**Friction is now measured** (111 legs, 2026-05-14 onward, excluding the early-May
+manual placements): **median 26.6 bps/leg, 53.3 bps round trip**; mean 40.9 / 81.7
+as the stress case. The engine still models zero. First-order effect on per-trade
+gross: `ema` 227→162 bps, `sma` 202→138 bps survive; **`macd` 95→31 bps (2.7 at the
+stress friction) does not** — and `macd` is currently *enabled* in `config.toml`.
+`donchian` is unmeasured because it has no backtest.
+
+**If the August donchian backtest fails net of friction, cancel the reset.** Running
+four months of a strategy the backtest rejects answers nothing.
+
+
+
 ### Backtest results (2018-01-01 → 2026-01-01, top-100, 4%, 25-cap)
 
-| Metric | Strategy | SPY B&H | QQQ B&H |
-|---|---|---|---|
-| Total return | +253% | +187% | +308% |
-| CAGR | +17.1% | +14.1% | +19.3% |
-| Sharpe | 1.14 | 0.78 | 0.85 |
-| Max drawdown | -20.5% | -33.7% | -35.1% |
+⚠️ **Corrected 2026-07-30.** The table below previously read "Strategy" with Sharpe
+1.14 / max DD -20.5%. Traced to its artifact
+(`backtests/20260606_130303/metrics.json`): it is the **EMA crossover** run, and two
+figures were wrong in the favourable direction. Real numbers:
 
-**Verdict:** Strategy beats both benchmarks on risk-adjusted basis (Sharpe 1.14 vs 0.78/0.85) with half the drawdown. Trails QQQ on raw return but with far less pain. **Profitable — proceed forward.**
+| Metric | EMA (`ema`) | SPY B&H | QQQ B&H |
+|---|---|---|---|
+| Total return | +253.3% | +187.5% | +308% |
+| CAGR | +17.1% | +14.1% | +19.3% |
+| Sharpe | **1.055** (was printed 1.14) | 0.78 | 0.85 |
+| Max drawdown | **-21.4%** (was printed -20.5%) | -33.7% | -35.1% |
+
+**Three caveats that matter more than the numbers:**
+
+1. **`ema` is not what trades.** Production runs **donchian**, and there is *no
+   Donchian backtest artifact on disk at all*. The four saved runs are sma, sma,
+   ema, macd. The strategy actually placing orders has never been backtested here.
+2. **Wrong parameters.** Every saved run used `pct=0.04, max_positions=25`.
+   Production is `0.018 / 50`. `cli.py backtest` defaults don't read config, which
+   is how this happened.
+3. **Zero frictions.** `backtest/engine.py` models no commission and no slippage,
+   while production sends market orders into the open. `skipped_buys_no_cash: 2207`
+   at 97% exposure also means entries were rationed in market-cap iteration order,
+   so large caps systematically got the cash — an unmodelled selection effect.
+
+**Verdict: withdrawn pending a donchian run at production settings with frictions.**
+The earlier "profitable — proceed forward" call rested on a different strategy at
+different parameters with two misreported metrics.
 
 ### Immediate next concrete deliverable
 
@@ -358,7 +443,8 @@ metric definitions to mirror inside whichever BI tool wins.
 - [`CLAUDE.md`](CLAUDE.md) — Claude Code project context (style, conventions, running commands)
 - [`PROJECT_MAP.md`](PROJECT_MAP.md) — module-level reference + Mermaid diagrams
 - [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) — original V2 plan + implementation deltas
-- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — day-to-day operations: cadence, strategy pool, config, troubleshooting
+- [`docs/playbooks/`](docs/playbooks/) — **all operational procedures, centralised.** Start at the index:
+  daily operations, paper reset, data recovery, IB Gateway, deployment, Linux bring-up
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — Sessions F → onward
 - [`tests/TEST_REGISTRY.csv`](tests/TEST_REGISTRY.csv) — every test, one row each
 

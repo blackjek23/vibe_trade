@@ -19,11 +19,13 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 | Time (Asia/Jerusalem) | Command                   | Role                                                                    |
 | --------------------- | ------------------------- | ----------------------------------------------------------------------- |
+| 15:50                 | `vibe-trade preflight`    | Verify IB Gateway is up + config sane. Read-only. Telegrams either way. |
 | 16:00                 | `vibe-trade submit`       | Exits first, then entries. Submits orders to IB. No DB writes.         |
-| 16:25                 | `vibe-trade record`       | Save today's submissions to DB as SUBMITTED.                            |
+| 16:35                 | `vibe-trade record`       | Save today's fills to DB as SUBMITTED. Must be AFTER the 16:30 US open.  |
 | 23:30                 | `vibe-trade reconcile`    | Update statuses (FILLED/CANCELLED/PARTIALLY_FILLED) + portfolio snapshot. |
 
-**Deployment:** Docker containers via `docker compose run` + host crontab (prod) / Windows 11 manual CLI (dev). Timezone = `Asia/Jerusalem`. See `deploy/README.md` for setup.
+**Deployment:** Docker containers via `docker compose run` + host crontab (prod) / Windows 11 manual CLI (dev). Timezone = `Asia/Jerusalem`.
+**All operational procedures live in `docs/playbooks/`** (index at `docs/playbooks/README.md`): daily operations, paper reset, data recovery, IB Gateway unattended setup, deployment, Linux bring-up.
 
 **Key invariants:**
 - Strategies evaluate yesterday's closed daily bar (`df.iloc[-1]`). No intraday, no lookahead.
@@ -33,10 +35,17 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image) + Session L (multi-strategy) + audit-hardening session. **393 tests passing.** See `PROJECT_MASTER_STATE.md` for the live status.
+V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image) + Session L (multi-strategy) + audit-hardening session. **422 tests passing.** See `PROJECT_MASTER_STATE.md` for the live status.
+
+> **The bot is live** (since 2026-05-06). Two things are open: **10 trading days had
+> no run at all** because IB Gateway wasn't up (full-day outages — no orders placed,
+> so benign, but nothing alerted), and the **backtest verdict is withdrawn** —
+> donchian, the only strategy trading, has never been backtested at production
+> settings. Both are detailed at the top of `PROJECT_MASTER_STATE.md`.
+> Run `python scripts/audit_drift.py <db>` before trusting any DB-derived report.
 
 - **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done.
-- **Session I** (backtest framework + first run + benchmarks): done. Strategy beats SPY/QQQ on Sharpe (1.14 vs 0.78/0.85) with half the drawdown. Verdict: profitable, proceed forward.
+- **Session I** (backtest framework + first run + benchmarks): framework done, **verdict withdrawn 2026-07-30**. The "Sharpe 1.14" headline was the *ema* run with Sharpe misreported (real: 1.055) at `pct=0.04/25-cap`; production runs *donchian* at `0.018/50` and has never been backtested. Frictions are zero. See `PROJECT_MASTER_STATE.md`.
 - **Session F** (notifications + structured logging): done. All three V2 jobs send Telegram via the configured notifier (Console fallback when off). Logs are plain to stdout + JSON to `logs/vibe_trade.log` with daily rotation, 7-day retention. DB is the source of truth for analytics; logs are for short-term ops only.
 - **Session G** (Docker deployment): done. Single image (python:3.11-slim + uv), three compose services, `network_mode: host` for IB Gateway. Host crontab triggers jobs Mon–Fri. Includes smoke-test script and full deploy README.
 - **Strategies:** Multi-strategy registry (Session L). `strategy/registry.py` maps ids → strategies, built from the config `[[strategies]]` list (order = entry priority). Available: Donchian breakout (`"donchian"`, N=20), SMA crossover (`"sma"` 20/50), EMA crossover (`"ema"` 12/26), MACD crossover (`"macd"` 12/26/9) — the three crossovers use regime/state semantics (BUY fast>slow, SELL fast<slow). Submit: priority conflict resolution + strategy-scoped exits (`order_ref=<id>`); record reads `orderRef`→`strategy_name`. Strategies are stateless (`evaluate(symbol, candles)` — no entry-price/stop awareness), so stop/target/trailing/intraday strategies need new machinery.
@@ -53,13 +62,13 @@ src/vibe_trade/
 ├── config.py      # pydantic config models + load_config
 ├── data/          # yfinance provider, SP500 universe, sp100_top static list
 ├── db/            # SQLAlchemy models, repositories, engine
-├── jobs/          # V2 jobs: submit.py, record.py, reconcile.py, override.py
+├── jobs/          # V2 jobs: preflight.py, submit.py, record.py, reconcile.py, override.py
 ├── backtest/      # data.py, engine.py, metrics.py, plot.py (Session I)
 ├── reports/       # data.py, metrics.py, render.py (Session K) + plot.py (Session K-plus weekly PNG)
 ├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic + report-weekly image)
 ├── risk/          # manager.py, position_sizer.py, panic.py
 ├── strategy/      # base.py, registry.py, examples/{donchian,sma_crossover,ema_crossover,macd_crossover}.py
-└── cli.py         # typer: submit, record, reconcile, report, report-weekly, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, panic
+└── cli.py         # typer: preflight, submit, record, reconcile, report, report-weekly, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, review-trades, panic
 
 tests/
 ├── TEST_REGISTRY.csv    # central list of all tests (update after every change)
@@ -72,16 +81,34 @@ deploy/
 ├── Dockerfile                 # python:3.11-slim + uv, single image for all jobs
 ├── docker-compose.yml         # submit, record, reconcile, report-weekly services (network_mode: host)
 ├── .env.example               # Telegram secrets template
-├── crontab.example            # Mon-Fri 16:00/16:25/23:30 + Sat 09:00 report-weekly, Asia/Jerusalem
+├── crontab.example            # Mon-Fri 15:50/16:00/16:35/23:30 + Sat 09:00 report-weekly, Asia/Jerusalem
+├── ibgateway/                 # systemd + IBC assets so Gateway starts itself (untested on-box)
 ├── smoke-test.sh              # sequential run of all jobs
 └── README.md                  # full setup, scheduling, troubleshooting guide
 
 docs/
+├── playbooks/                 # ALL operational procedures (start at README.md)
+│   ├── README.md              # index / router
+│   ├── daily-operations.md    # cadence, strategy pool, config, troubleshooting
+│   ├── paper-reset.md         # clean-slate paper run
+│   ├── data-recovery.md       # drift audit, NEEDS_REVIEW, backup restore
+│   ├── ib-gateway.md          # systemd + IBC unattended Gateway
+│   ├── deployment.md          # Docker, cron install, updating
+│   └── linux-bringup.md       # fresh prod host end to end
 ├── ARCHITECTURE_V2.md         # original V2 plan + post-implementation deltas
 ├── ROADMAP.md                 # Sessions H → onward
+├── SESSION_H_FINDINGS.md      # numbered bug/incident history
 └── superpowers/               # per-session design specs + implementation plans
     ├── specs/
     └── plans/
+
+scripts/                       # operator tools (not pytest)
+├── audit_drift.py             # DB-vs-IB consistency report; exit 1 if dirty
+├── measure_slippage.py        # realized fill-vs-open slippage in bps (needs network)
+├── reset_paper_db.py          # archive + wipe the DB (refuses unless mode=paper)
+├── verify_db.py               # integrity_check + row counts
+├── export_db.sh               # consistent snapshot out of the Docker volume
+└── import_prod_db.ps1         # pull a prod snapshot to the dev machine
 
 scratches/               # live IB-paper shape-discovery + DB-write scripts (not pytest)
 ├── scratch_positions.py       # get_positions + account summary
@@ -119,8 +146,9 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 
 # V2 CLI (paper or live per config.toml mode)
 .venv/Scripts/python -m vibe_trade --help
+.venv/Scripts/python -m vibe_trade preflight    # 15:50 — is Gateway up? read-only
 .venv/Scripts/python -m vibe_trade submit       # 16:00 — exits then entries
-.venv/Scripts/python -m vibe_trade record       # 16:25 — persist today's fills
+.venv/Scripts/python -m vibe_trade record       # 16:35 — persist today's fills (after 16:30 open)
 .venv/Scripts/python -m vibe_trade reconcile    # 23:30 — finalize statuses + snapshot
 .venv/Scripts/python -m vibe_trade report-weekly # Sat 09:00 — weekly dashboard PNG + Telegram (needs .[plot])
 
@@ -130,7 +158,7 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 # Maintenance
 .venv/Scripts/python -m vibe_trade refresh-sp100   # quarterly: refresh top-100 list
 
-# Docker deployment (Linux prod — see deploy/README.md)
+# Docker deployment (Linux prod — see docs/playbooks/deployment.md)
 cd deploy && docker compose build                  # build image
 cd deploy && docker compose run --rm submit        # run one job
 cd deploy && ./smoke-test.sh                       # run all three sequentially
