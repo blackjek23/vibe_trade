@@ -401,6 +401,10 @@ test_submit.py,TestDoubleRunGuard,test_unrelated_refs_do_not_abort,Manual overri
 test_submit.py,TestDoubleRunGuard,test_force_bypasses_guard,force=True bypasses the double-run guard
 test_broker.py,TestGetTodayOrderRefs,test_collects_refs_from_open_orders_and_fills,get_today_order_refs gathers refs from working orders + fills
 test_broker.py,TestGetTodayOrderRefs,test_blank_refs_excluded,get_today_order_refs drops blank refs
+test_broker.py,TestGetAccountSummary,test_resolves_real_account_id_from_normal_rows,get_account_summary resolves the real account id from normally-tagged rows
+test_broker.py,TestGetAccountSummary,test_all_tagged_rows_do_not_clobber_real_account_id,"Regression (found running H-1b live): account=""All"" rows don't overwrite the real managedAccounts() id"
+test_broker.py,TestGetAccountSummary,test_requests_summary_scoped_to_the_managed_account,accountSummaryAsync is called scoped to the resolved managed account, not the default group
+test_broker.py,TestGetAccountSummary,test_no_managed_accounts_falls_back_to_empty_id,No managedAccounts() falls back to an empty account_id rather than crashing
 test_cli_crash_alert.py,TestLiveModeBanner,test_live_mode_logs_warning,Live mode emits a LIVE TRADING MODE warning banner
 test_cli_crash_alert.py,TestLiveModeBanner,test_paper_mode_no_banner,Paper mode stays silent (no banner)
 test_reconcile_drift.py,TestOrphanSellRecovery,test_orphan_sell_closes_matching_open_row,Orphan SELL fill matched to an OPEN row by symbol and closed with row-basis P&L

@@ -66,11 +66,22 @@ class IBBroker(BaseBroker):
         self._contract_cache.clear()
 
     async def get_account_summary(self) -> AccountSummary:
-        account_values = await self.ib.accountSummaryAsync()
+        # Request scoped to the real account id (from managedAccounts(), not
+        # the group name) -- accountSummaryAsync() with no account tags every
+        # row to the literal string "All" for a single-account connection,
+        # which SEC-2's account_mode_match check then misreads as neither a
+        # paper nor a live account id and fails closed (found running H-1b's
+        # systemd timers for real against a live-ish paper account: preflight
+        # reported account="All", not "DU..."). managedAccounts() is what
+        # IBBroker.connect() already trusts implicitly via the `account`
+        # connect kwarg, so this mirrors that source of truth.
+        managed = self.ib.managedAccounts()
+        account_id = managed[0] if managed else ""
+        account_values = await self.ib.accountSummaryAsync(account_id)
         values: dict[str, float] = {}
-        account_id = ""
         for av in account_values:
-            account_id = av.account
+            if av.account and av.account != "All":
+                account_id = av.account
             if av.tag in (
                 "NetLiquidation",
                 "TotalCashValue",

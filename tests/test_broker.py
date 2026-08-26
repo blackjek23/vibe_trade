@@ -35,6 +35,14 @@ class _FakeIB:
         # Record the symbol so tests can count how often we qualified.
         self.qualify_calls.append(contract.symbol)
 
+    def managedAccounts(self) -> list[str]:
+        return getattr(self, "_managed_accounts", [])
+
+    async def accountSummaryAsync(self, account: str = ""):
+        self.account_summary_calls = getattr(self, "account_summary_calls", [])
+        self.account_summary_calls.append(account)
+        return getattr(self, "_account_values", [])
+
     def placeOrder(self, contract, order):
         # Return a minimal trade-like object with no fills, status SUBMITTED.
         class _Status:
@@ -366,3 +374,69 @@ class TestOrderPacing:
         sleep_durations.clear()
         await broker._get_qualified_contract("AAPL")  # cache hit — no pace
         assert sleep_durations == []
+
+
+class TestGetAccountSummary:
+    """Regression coverage for a bug found running H-1b's systemd timers for
+    real: with no account pinned in config, IB tags account-summary rows with
+    the literal group name "All" instead of a real account id, which SEC-2's
+    account_mode_match check then misreads as neither paper nor live and
+    fails closed on every run.
+    """
+
+    async def test_resolves_real_account_id_from_normal_rows(self):
+        from types import SimpleNamespace
+
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIB()
+        fake._managed_accounts = ["DU7647040"]
+        fake._account_values = [
+            SimpleNamespace(account="DU7647040", tag="NetLiquidation", value="95955.52"),
+            SimpleNamespace(account="DU7647040", tag="TotalCashValue", value="10000.0"),
+        ]
+        broker.ib = fake
+
+        summary = await broker.get_account_summary()
+
+        assert summary.account_id == "DU7647040"
+        assert summary.net_liquidation == 95955.52
+
+    async def test_all_tagged_rows_do_not_clobber_real_account_id(self):
+        # The exact bug: some rows come back tagged account="All" (the
+        # request's group name) rather than the real account. Those rows
+        # must not overwrite the id resolved from managedAccounts().
+        from types import SimpleNamespace
+
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIB()
+        fake._managed_accounts = ["DU7647040"]
+        fake._account_values = [
+            SimpleNamespace(account="All", tag="NetLiquidation", value="95955.52"),
+        ]
+        broker.ib = fake
+
+        summary = await broker.get_account_summary()
+
+        assert summary.account_id == "DU7647040"
+
+    async def test_requests_summary_scoped_to_the_managed_account(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIB()
+        fake._managed_accounts = ["DU7647040"]
+        fake._account_values = []
+        broker.ib = fake
+
+        await broker.get_account_summary()
+
+        assert fake.account_summary_calls == ["DU7647040"]
+
+    async def test_no_managed_accounts_falls_back_to_empty_id(self):
+        broker = IBBroker(BrokerConfig(), mode="paper")
+        fake = _FakeIB()
+        fake._managed_accounts = []
+        fake._account_values = []
+        broker.ib = fake
+
+        summary = await broker.get_account_summary()
+
+        assert summary.account_id == ""
