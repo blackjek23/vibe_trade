@@ -1,0 +1,17 @@
+[Unit]
+Description=Run vibe-trade submit at 09:00 America/New_York (H-1b, PROJECT_EVALUATION.md)
+# 30 minutes before the 09:30 ET open, every trading day, regardless of
+# which side of a DST transition Israel or the US happen to be on. A fixed
+# Israel-clock time (the old `deploy/crontab.example` line) drifts relative
+# to the US market by up to an hour during the ~19 days/year the two
+# countries' DST calendars don't match (H-1, PROJECT_EVALUATION.md). Code
+# still double-checks this independently (`_last_bar_is_closed`, H-1a) --
+# this timer is the fix for the schedule itself, not a replacement for that.
+
+[Timer]
+OnCalendar=Mon..Fri 09:00 America/New_York
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run vibe-trade record at 09:35 America/New_York (H-1b, PROJECT_EVALUATION.md)
+# 5 minutes after the 09:30 ET open -- must run AFTER fills exist. See
+# submit's timer comment for why this tracks the US clock, not Israel's.
+
+[Timer]
+OnCalendar=Mon..Fri 09:35 America/New_York
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

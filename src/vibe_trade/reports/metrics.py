@@ -66,11 +66,18 @@ def compute_metrics(daily_rows: list[DailyRow]) -> ReportMetrics:
     if not rows:
         return _zero_metrics()
 
-    start = rows[0].account_value
-    end = rows[-1].account_value
+    # `rows` is already filtered to account_value is not None (above), but
+    # that filter doesn't narrow DailyRow.account_value's declared Optional
+    # type for mypy across a later loop -- pull a properly-typed parallel
+    # list once, up front, instead of re-deriving `float | None` everywhere.
+    values: list[float] = [r.account_value for r in rows if r.account_value is not None]
+    dates: list[date] = [r.date for r in rows]
+
+    start = values[0]
+    end = values[-1]
     total_return_pct = (end / start - 1.0) * 100.0 if start else 0.0
 
-    span_days = (rows[-1].date - rows[0].date).days
+    span_days = (dates[-1] - dates[0]).days
     if span_days > 0 and start and end and start > 0 and end > 0:
         years = span_days / 365.25
         cagr_pct = ((end / start) ** (1 / years) - 1) * 100.0
@@ -79,7 +86,6 @@ def compute_metrics(daily_rows: list[DailyRow]) -> ReportMetrics:
 
     # ---- Sharpe on daily account_value returns (std-guarded, same shape
     # as backtest/metrics.py:72)
-    values = [r.account_value for r in rows]
     returns: list[float] = []
     for i in range(1, len(values)):
         prev = values[i - 1]
@@ -100,17 +106,16 @@ def compute_metrics(daily_rows: list[DailyRow]) -> ReportMetrics:
     dd_peak_date: date | None = None
     dd_trough_date: date | None = None
     cur_peak_value = values[0]
-    cur_peak_date = rows[0].date
-    for r in rows:
-        v = r.account_value
+    cur_peak_date = dates[0]
+    for v, d in zip(values, dates):
         if v > cur_peak_value:
             cur_peak_value = v
-            cur_peak_date = r.date
+            cur_peak_date = d
         dd = v / cur_peak_value - 1.0
         if dd < max_dd:
             max_dd = dd
             dd_peak_date = cur_peak_date
-            dd_trough_date = r.date
+            dd_trough_date = d
     max_drawdown_pct = max_dd * 100.0
 
     # ---- Best/worst day P&L (realized + unrealized)

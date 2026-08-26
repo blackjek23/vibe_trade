@@ -63,3 +63,18 @@ class OrderResult:
     fill_price: float | None = None
     fill_time: datetime | None = None
     error_message: str | None = None
+
+
+# IB order statuses that mean the order definitively did NOT make it to the
+# exchange as a working order. Everything else -- including "PendingSubmit",
+# "ApiPending", and the transient empty string an order can carry in the
+# instant after placeOrder() returns -- means the order IS at IB and may
+# still fill. Whitelisting *success* statuses instead was the original
+# mistake (H-5, PROJECT_EVALUATION.md): a busy open marks legitimately-placed
+# orders as "failed", undercounting how many positions are actually held.
+# Shared by `jobs.submit` and `risk.panic` -- both need the same answer to
+# "did this order actually fail", and disagreeing would be worse than either
+# definition alone.
+PLACEMENT_FAILURE_STATUSES: frozenset[str] = frozenset(
+    {"Cancelled", "ApiCancelled", "Inactive"}
+)

@@ -120,6 +120,28 @@ class TestOrphanSellRecovery:
         assert row.pnl > 0
         assert "realizedPNL=-42.67" in row.notes
 
+    async def test_partial_orphan_sell_preserves_entry_filled_quantity(self, db_session: Session):
+        """H-3 regression: an orphan SELL that only partially closed the
+        position must not overwrite the entry-leg filled_quantity.
+        """
+        trade_repo, snap_repo, daily_repo = _setup_repos(db_session)
+        open_trade = _make_open_trade(trade_repo, symbol="CSCO", perm_id=600,
+                                      qty=17, entry_price=95.96)
+        # Only 10 of the 17 held shares sold.
+        sell = _fill(perm_id=999, order_id=42, symbol="CSCO", side="SLD",
+                     shares=10, price=115.13, realized_pnl=-42.67)
+        broker = MockBroker(fills=[sell], positions=[_pos("CSCO", 7)])
+
+        await run_reconcile(
+            broker=broker, trade_repo=trade_repo,
+            snap_repo=snap_repo, daily_repo=daily_repo,
+        )
+
+        row = db_session.get(Trade, open_trade.id)
+        assert row.status == "PARTIALLY_FILLED"
+        assert row.filled_quantity == 17  # entry leg untouched
+        assert row.exit_filled_quantity == 10  # exit leg's own column
+
     async def test_recovered_sell_not_flagged_by_drift_sweep(self, db_session: Session):
         """Recovery runs before the sweep, so no row is handled twice."""
         trade_repo, snap_repo, daily_repo = _setup_repos(db_session)

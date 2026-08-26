@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from vibe_trade.broker.base import BaseBroker
+from vibe_trade.data.market_calendar import is_us_trading_day, today_us_eastern
+from vibe_trade.jobs.submit import PAPER_ACCOUNT_PREFIXES
 from vibe_trade.strategy.registry import BuiltStrategy
 
 logger = logging.getLogger(__name__)
@@ -65,15 +68,34 @@ async def run_preflight(
     universe: list[str],
     strategies: list[BuiltStrategy],
     max_positions: int,
+    mode: str = "paper",
     min_net_liquidation: float = MIN_NET_LIQUIDATION,
+    now: datetime | None = None,
 ) -> PreflightResult:
     """Verify submit's preconditions. Never raises for a *failed check* — the
     failure is recorded so every check runs and the report is complete.
 
     The caller has already connected the broker; reaching this function at all
     means the API handshake succeeded, which is itself the most important check.
+
+    `now`, if given, must be timezone-aware -- passed to the market-calendar
+    check (H-4) for deterministic tests. Defaults to real time.
     """
     result = PreflightResult()
+
+    # --- US market calendar (H-4). Informational only -- never fails
+    # preflight, because a holiday is a valid day to do nothing on, not a
+    # problem. Exists so an operator sees *why* submit will skip today
+    # instead of wondering why the 16:00 run was silent.
+    today_et = today_us_eastern(now)
+    if is_us_trading_day(today_et):
+        result.add("market_session", True, f"{today_et.isoformat()}: NYSE open today")
+    else:
+        result.add(
+            "market_session", True,
+            f"{today_et.isoformat()}: NYSE CLOSED today (holiday/weekend) -- "
+            "submit will skip cleanly",
+        )
 
     # --- IB account readable, and actually populated
     try:
@@ -91,6 +113,28 @@ async def run_preflight(
                 f"net_liq=${account.net_liquidation:,.2f} below "
                 f"${min_net_liquidation:,.2f} -- Gateway may still be logging in",
             )
+
+        # --- account IB Gateway is serving matches configured mode (SEC-2)
+        # config.toml's `mode` and the account Gateway actually connects to
+        # (set by a separate TRADING_MODE env var read by IBC) are two
+        # unlinked decisions. An empty account_id means the read itself is
+        # untrustworthy (Gateway mid-login) -- already caught by ib_account
+        # above, so skip rather than pile on a second failure for the
+        # same root cause.
+        if account.account_id:
+            is_paper_account = account.account_id.startswith(PAPER_ACCOUNT_PREFIXES)
+            if is_paper_account == (mode == "paper"):
+                result.add(
+                    "account_mode_match", True,
+                    f"account={account.account_id} mode={mode}",
+                )
+            else:
+                result.add(
+                    "account_mode_match", False,
+                    f"config mode={mode!r} but account {account.account_id!r} "
+                    f"looks like a {'paper' if is_paper_account else 'live'} "
+                    "account -- Gateway may be serving the wrong account",
+                )
     except Exception as exc:  # noqa: BLE001
         result.add("ib_account", False, f"{type(exc).__name__}: {exc}")
 

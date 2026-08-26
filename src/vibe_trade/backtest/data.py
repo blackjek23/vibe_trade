@@ -32,7 +32,9 @@ def _yf_download_bars(symbol: str, start: date, end: date) -> pd.DataFrame:
     """Default fetcher: yfinance daily OHLCV. Returns empty DataFrame on failure."""
     import yfinance as yf
 
-    df = yf.download(
+    # yfinance ships no type stubs; explicit annotation instead of trusting
+    # mypy's Any inference through the rest of this function.
+    df: pd.DataFrame = yf.download(
         tickers=symbol,
         start=start.isoformat(),
         end=end.isoformat(),

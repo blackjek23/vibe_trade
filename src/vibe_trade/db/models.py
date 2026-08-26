@@ -60,9 +60,20 @@ class Trade(Base):
     exit_ib_order_id: Mapped[int | None] = mapped_column(Integer)  # SELL orderId — session-scoped
     exit_perm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # IB persistent ID for SELL
 
-    # Quantities — requested is what we asked for; filled is what actually executed.
+    # Quantities — requested is what we asked for on the BUY leg; filled is
+    # what actually executed on the BUY leg. `filled_quantity` is set once by
+    # `confirm_buy_fill` and never touched again -- it must stay the entry
+    # basis for the life of the row, partial exit or not. The exit leg gets
+    # its own column (below) instead of overwriting this one; before H-3
+    # (see PROJECT_EVALUATION.md) a partial SELL clobbered the entry
+    # quantity, destroying the cost basis and leaving the un-sold remainder
+    # invisible to every status-based query.
     requested_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     filled_quantity: Mapped[int | None] = mapped_column(Integer)
+
+    # Shares actually sold on the exit leg (SELL side). Independent of
+    # `filled_quantity` above -- see H-3.
+    exit_filled_quantity: Mapped[int | None] = mapped_column(Integer)
 
     # Statuses: SUBMITTED, OPEN, PENDING_CLOSE, CLOSED, CANCELLED, PARTIALLY_FILLED
     status: Mapped[str] = mapped_column(String(20), default="OPEN")
@@ -123,6 +134,17 @@ class PortfolioSnapshot(Base):
     market_value: Mapped[float | None] = mapped_column(Float)
     unrealized_pnl: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SchemaVersion(Base):
+    """Singleton row (id=1) tracking which migrations in ``db/migrations.py``
+    have been applied to this database file. See C-3, PROJECT_EVALUATION.md.
+    """
+
+    __tablename__ = "schema_version"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class ScanLog(Base):

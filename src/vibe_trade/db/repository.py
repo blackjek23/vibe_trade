@@ -167,6 +167,11 @@ class TradeRepository:
         `pnl` and `pnl_pct` are read from IB's fill report — we do not compute them here.
         `status` must be one of: CLOSED (fully filled), PARTIALLY_FILLED, CANCELLED.
         A CANCELLED close reverts the trade to OPEN (position still held).
+
+        `filled_quantity` is the exit leg's shares and is stored in
+        `exit_filled_quantity`, not `filled_quantity` -- the entry-leg column
+        set by `confirm_buy_fill` is never touched here (H-3, was clobbered by
+        a partial exit before PROJECT_EVALUATION.md's fix).
         """
         if status not in {"CLOSED", "PARTIALLY_FILLED", "CANCELLED"}:
             raise ValueError(f"Invalid close-fill status: {status}")
@@ -185,7 +190,9 @@ class TradeRepository:
             trade.exit_submitted_at = None
         else:
             trade.exit_price = exit_price
-            trade.filled_quantity = filled_quantity
+            # Exit leg's own column (H-3) -- entry filled_quantity is never
+            # touched again after confirm_buy_fill, partial exit or not.
+            trade.exit_filled_quantity = filled_quantity
             trade.exit_time = exit_time
             trade.pnl = pnl
             trade.pnl_pct = pnl_pct
@@ -222,6 +229,10 @@ class TradeRepository:
         transition by design, so this is the recovery door — used only by
         reconcile's orphan-SELL matching.
 
+        ``filled_quantity`` here is the exit leg's shares and is stored in
+        ``exit_filled_quantity``, not ``filled_quantity`` -- the entry-leg
+        column is never touched (H-3).
+
         **P&L basis:** computed from this row's own ``entry_price`` and
         ``exit_price``, so the stored ``pnl`` always reconciles against the prices
         in the same row. IB's ``realizedPNL`` (account-level average-cost basis) is
@@ -247,7 +258,9 @@ class TradeRepository:
         trade.exit_time = exit_time
         trade.exit_perm_id = exit_perm_id
         trade.exit_ib_order_id = exit_ib_order_id
-        trade.filled_quantity = filled_quantity
+        # Exit leg's own column (H-3) -- entry filled_quantity above (`expected`)
+        # is never touched again after confirm_buy_fill, partial exit or not.
+        trade.exit_filled_quantity = filled_quantity
         trade.pnl = pnl
         trade.pnl_pct = pnl_pct
         trade.status = "CLOSED" if filled_quantity == expected else "PARTIALLY_FILLED"

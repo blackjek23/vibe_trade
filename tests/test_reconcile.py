@@ -247,7 +247,11 @@ class TestSellReconciliation:
         )
         row = db_session.get(Trade, trade.id)
         assert row.status == "PARTIALLY_FILLED"
-        assert row.filled_quantity == 6
+        # H-3: exit leg has its own column; the entry fill (10) must survive
+        # a partial exit untouched, or the cost basis and the un-sold
+        # remainder both become unrecoverable.
+        assert row.filled_quantity == 10
+        assert row.exit_filled_quantity == 6
 
 
 class TestPortfolioSnapshot:

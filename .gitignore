@@ -34,3 +34,10 @@ deploy/config/
 deploy/logs/
 deploy/reports/
 deploy/.env
+
+# Ruflo local secrets and runtime data
+.env.local
+.env.*.local
+.claude-flow/
+.swarm/
+.agents/

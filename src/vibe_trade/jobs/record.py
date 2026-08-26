@@ -17,10 +17,14 @@ Invariants:
   stamps it onto the trade row. Falls back to the `strategy_name` arg (default
   "donchian") when the orderRef is empty (legacy/pre-L fills). The "trim" tag is
   a SELL ref and never reaches the BUY-insert path.
-- `requested_quantity` is set to total filled shares observed at record time.
-  For market orders on liquid S&P 500 names this equals the original ask
-  (partial fills essentially impossible). Edge case documented; revisit if
-  partials become a real problem.
+- `requested_quantity` prefers IB's live `totalQuantity` for a BUY still
+  working at record time (`get_open_orders`, cross-client/cross-process via
+  `reqAllOpenOrdersAsync`); it falls back to total filled shares only when the
+  order has already fully resolved (filled or cancelled) by record time, where
+  fills-so-far and the original ask agree anyway. Before this (H-2,
+  PROJECT_EVALUATION.md) a still-partially-filled order recorded whatever had
+  filled *as* the request, so reconcile's later `filled == requested` check
+  came out backwards in both directions.
 """
 
 from __future__ import annotations
@@ -68,6 +72,19 @@ async def run_record(
     result = RecordResult()
     timestamp = now or datetime.now()
 
+    # A still-working order's IB-reported totalQuantity (via `get_open_orders`,
+    # which calls reqAllOpenOrdersAsync -- cross-client, cross-process) is the
+    # true original ask. Fills-so-far is not: at 16:25/16:35 a BUY that hasn't
+    # fully filled yet is indistinguishable from one whose original size was
+    # smaller, which inverted partial-fill detection in both directions (H-2,
+    # PROJECT_EVALUATION.md). Only orders still open at record time land here;
+    # an order that has already fully resolved (filled or cancelled) by then
+    # has no "requested" value IB will hand back except the fills themselves,
+    # which is correct in that case anyway.
+    requested_qty_by_perm: dict[int, int] = {
+        oo.perm_id: oo.quantity for oo in await broker.get_open_orders()
+    }
+
     fills = list(broker.ib.fills())
     result.fills_seen = len(fills)
 
@@ -110,18 +127,22 @@ async def run_record(
                 # falling back to the default for empty/legacy refs.
                 order_ref = (getattr(group[0].execution, "orderRef", "") or "").strip()
                 trade_strategy = order_ref or strategy_name
+                # Prefer IB's live totalQuantity for an order still working at
+                # record time (H-2) -- fall back to fills-so-far only for an
+                # order that has already fully resolved, where they agree anyway.
+                requested_qty = requested_qty_by_perm.get(perm_id, total_shares)
                 trade = repo.create_submitted_buy(
                     symbol=symbol,
                     strategy_name=trade_strategy,
-                    requested_quantity=total_shares,
+                    requested_quantity=requested_qty,
                     ib_order_id=order_id,
                     submitted_at=timestamp,
                     perm_id=perm_id,
                 )
                 result.buys_inserted += 1
                 logger.info(
-                    "BUY %s perm_id=%d shares=%d strategy=%s -> trade_id=%d SUBMITTED",
-                    symbol, perm_id, total_shares, trade_strategy, trade.id,
+                    "BUY %s perm_id=%d shares=%d/%d strategy=%s -> trade_id=%d SUBMITTED",
+                    symbol, perm_id, total_shares, requested_qty, trade_strategy, trade.id,
                 )
 
             elif ib_side == "SLD":
@@ -132,10 +153,13 @@ async def run_record(
                     )
                     continue
 
-                open_matches = [
-                    t for t in repo.get_open_trades() if t.symbol == symbol
-                ]
-                if not open_matches:
+                # FIFO-ordered (entry_time asc, id asc) -- matches how IB
+                # reports realized P&L on a partial unwind, and gives a
+                # deterministic target when a symbol wrongly has more than one
+                # OPEN row (C-4: a plain get_open_trades() filter has no
+                # ORDER BY and cannot make this guarantee).
+                open_trade = repo.find_open_by_symbol(symbol)
+                if open_trade is None:
                     result.sells_skipped_no_open += 1
                     logger.warning(
                         "SELL %s perm_id=%d -- no OPEN trade in DB to flip",
@@ -143,7 +167,6 @@ async def run_record(
                     )
                     continue
 
-                open_trade = open_matches[0]  # earliest by repo ordering
                 repo.mark_pending_close(
                     trade_id=open_trade.id,
                     exit_ib_order_id=order_id,

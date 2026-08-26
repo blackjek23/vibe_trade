@@ -110,6 +110,7 @@ def load_trade_activity(
     )
     counts: dict[date, int] = {}
     for t in rows:
+        assert t.entry_time is not None  # guaranteed by the is_not(None) filter above
         d = t.entry_time.date()
         counts[d] = counts.get(d, 0) + 1
     return counts
@@ -128,16 +129,23 @@ def load_closed_trades(
         .filter(Trade.exit_time >= cutoff_dt)
         .all()
     )
-    return [
-        ClosedTrade(
-            symbol=t.symbol,
-            entry_time=t.entry_time,
-            exit_time=t.exit_time,
-            pnl=t.pnl or 0.0,
-            pnl_pct=t.pnl_pct,
+    closed = []
+    for t in rows:
+        # entry_time: guaranteed by the CLOSED lifecycle (a trade can't reach
+        # CLOSED without confirm_buy_fill having set it first). exit_time:
+        # guaranteed by the is_not(None) filter above.
+        assert t.entry_time is not None
+        assert t.exit_time is not None
+        closed.append(
+            ClosedTrade(
+                symbol=t.symbol,
+                entry_time=t.entry_time,
+                exit_time=t.exit_time,
+                pnl=t.pnl or 0.0,
+                pnl_pct=t.pnl_pct,
+            )
         )
-        for t in rows
-    ]
+    return closed
 
 
 def detect_outlier_days(daily_rows: list[DailyRow]) -> set[date]:

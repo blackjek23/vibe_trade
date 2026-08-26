@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -108,7 +109,9 @@ def compute_metrics(result: BacktestResult) -> BacktestMetrics:
     # Approximation: a day "has exposure" if any trade was open on it.
     # Span: from first BUY to last SELL (or end).
     if n_trades > 0:
-        exposed_days = _count_exposed_days(trades, eq.index)
+        # eq is always built from a DatetimeIndex (engine.py); pandas-stubs
+        # types .index generically as Index[Any] regardless.
+        exposed_days = _count_exposed_days(trades, cast(pd.DatetimeIndex, eq.index))
         exposure_pct = exposed_days / len(eq) * 100.0 if len(eq) else 0.0
     else:
         # Open-at-end positions count as exposure for their holding span,

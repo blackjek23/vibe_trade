@@ -25,5 +25,11 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check src tests
 
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Dependency vulnerability audit
+        run: uv run pip-audit
+
       - name: Tests
         run: uv run pytest -q

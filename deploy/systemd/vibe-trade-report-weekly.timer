@@ -1,0 +1,11 @@
+[Unit]
+Description=Run vibe-trade weekly report Saturday 09:00 Asia/Jerusalem
+# Not tied to the US market clock.
+
+[Timer]
+OnCalendar=Sat *-*-* 09:00:00 Asia/Jerusalem
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

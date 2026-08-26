@@ -1,0 +1,13 @@
+[Unit]
+Description=vibe-trade submit (exits then entries)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=vibe
+Group=vibe
+WorkingDirectory=/opt/vibe-trade/deploy
+ExecStart=/usr/bin/docker compose run --rm submit
+StandardOutput=append:/opt/vibe-trade/deploy/logs/cron.log
+StandardError=append:/opt/vibe-trade/deploy/logs/cron.log

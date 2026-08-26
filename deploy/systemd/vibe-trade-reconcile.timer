@@ -1,0 +1,12 @@
+[Unit]
+Description=Run vibe-trade reconcile at 16:30 America/New_York (H-1b, PROJECT_EVALUATION.md)
+# 30 minutes after the 16:00 ET close. See submit's timer comment for why
+# this tracks the US clock, not Israel's.
+
+[Timer]
+OnCalendar=Mon..Fri 16:30 America/New_York
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

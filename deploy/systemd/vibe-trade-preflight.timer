@@ -1,0 +1,12 @@
+[Unit]
+Description=Run vibe-trade preflight at 08:50 America/New_York (H-1b, PROJECT_EVALUATION.md)
+# 10 minutes before submit, tracking the US market clock directly instead of
+# a fixed Israel-clock time -- see the README in this directory for why.
+
+[Timer]
+OnCalendar=Mon..Fri 08:50 America/New_York
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

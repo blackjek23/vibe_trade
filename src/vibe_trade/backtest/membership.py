@@ -330,6 +330,31 @@ def generate_artifact_source(
     )
 
 
+def members_ever_in_range(
+    timeline: MembershipTimeline, start: date, end: date
+) -> frozenset[str]:
+    """Union of every symbol that was a member on *any* day in `[start, end]`.
+
+    Feeds the backtest's bar-caching/loading step: a point-in-time filter can
+    only exclude a symbol from *entries* on days it wasn't a member (see
+    `run_backtest`'s `membership` param) if that symbol's bars were fetched
+    in the first place. This answers "which symbols do we need history for
+    at all", not "which symbols were members on day X" -- that's `.at()`.
+
+    `bisect_right(breakpoints, d)` is the same index `.at(d)` reads from
+    `values`, so the membership set active at `start` is `values[lo]` and the
+    one active at `end` is `values[hi]`; every set in between covers a day
+    strictly inside the range. Unioning `values[lo : hi + 1]` therefore
+    covers exactly the sets active anywhere in `[start, end]`, no more.
+    """
+    lo = bisect_right(timeline.breakpoints, start)
+    hi = bisect_right(timeline.breakpoints, end)
+    result: set[str] = set()
+    for members in timeline.values[lo : hi + 1]:
+        result |= members
+    return frozenset(result)
+
+
 def load_default_timeline() -> MembershipTimeline:
     """Build a `MembershipTimeline` from the generated `data.sp500_membership`
     module -- the entry point everything outside this module (the engine,

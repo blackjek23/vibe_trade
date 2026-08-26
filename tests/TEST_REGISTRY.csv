@@ -188,6 +188,17 @@ test_backtest_engine.py,TestEmpty,test_flat_data_no_signals_no_trades,Flat OHLC 
 test_backtest_engine.py,TestBuyFlow,test_buy_fills_at_next_day_open,Donchian breakout day fills at next bar's open price
 test_backtest_engine.py,TestBuyFlow,test_buy_skipped_when_no_cash,Sizer skips when 1 share > target equity
 test_backtest_engine.py,TestSellFlow,test_sell_signal_closes_position_at_next_day_open,Held position with breakdown signal exits at next-day open
+test_backtest_engine.py,TestFrictionsDataclass,test_zero_frictions_leaves_price_unchanged,Frictions() with all-zero defaults leaves BUY and SELL fill prices unchanged
+test_backtest_engine.py,TestFrictionsDataclass,test_slippage_moves_buy_up_and_sell_down,slippage_bps moves a BUY fill price up and a SELL fill price down by the same bps
+test_backtest_engine.py,TestFrictionsDataclass,test_zero_frictions_charges_no_commission,All-zero commission fields never charge the commission_min floor for doing nothing
+test_backtest_engine.py,TestFrictionsDataclass,test_commission_floor_applies_below_minimum,commission() returns commission_min when per_share*qty is below it
+test_backtest_engine.py,TestFrictionsDataclass,test_commission_per_share_applies_above_minimum,commission() returns per_share*qty when it exceeds commission_min
+test_backtest_engine.py,TestFrictionsInBacktest,test_slippage_adjusts_recorded_entry_and_exit_prices,slippage_bps shifts the recorded BUY entry price up and SELL exit price down by the configured bps
+test_backtest_engine.py,TestFrictionsInBacktest,test_commission_reduces_pnl_by_exactly_the_round_trip_cost,Commission reduces a round-trip trade's realized pnl by exactly entry_commission + exit_commission and is reflected in total_commission
+test_backtest_engine.py,TestFrictionsInBacktest,test_no_frictions_arg_matches_explicit_no_friction,Omitting frictions (None) is indistinguishable from passing an explicit all-zero Frictions()
+test_backtest_engine.py,TestMembershipFiltering,test_entry_blocked_when_never_a_member,A membership timeline where the symbol is never a member suppresses the entry entirely
+test_backtest_engine.py,TestMembershipFiltering,test_entry_allowed_when_always_a_member,An always-member timeline reproduces the unfiltered entry result exactly
+test_backtest_engine.py,TestMembershipFiltering,test_held_position_still_exits_after_dropping_out_of_index,A position opened while a member still exits normally after the symbol later drops out of the index
 test_backtest_engine.py,TestCapAndDedup,test_position_cap_respected,30 simultaneous breakouts with cap=5 -> only 5 positions
 test_backtest_engine.py,TestCapAndDedup,test_held_ticker_not_re_bought,Already held -> not re-bought even on continued breakout
 test_backtest_engine.py,TestEquityCurve,test_equity_curve_has_one_point_per_trading_day,Equity series has one point per trading day in date range
@@ -421,6 +432,76 @@ test_preflight.py,TestConfigProblems,test_empty_universe_fails,Empty universe fa
 test_preflight.py,TestConfigProblems,test_no_strategies_fails,No enabled strategies fails preflight
 test_preflight.py,TestPositionCap,test_over_cap_is_flagged,Over-cap holdings are flagged with the force-trim count
 test_preflight.py,TestPositionCap,test_at_cap_exactly_is_ok,Exactly at the cap passes
+test_submit.py,TestEmptyPositionGuard,test_empty_positions_with_deployed_cash_aborts,C-1: 0 positions + cash far below net_liq -> abort before any order
+test_submit.py,TestEmptyPositionGuard,test_empty_positions_with_flat_cash_proceeds,C-1: 0 positions + cash ~= net_liq (genuinely flat) -> proceeds normally
+test_submit.py,TestEmptyPositionGuard,test_held_positions_skip_the_guard_regardless_of_cash,C-1 guard only applies when get_positions() itself comes back empty
+test_submit.py,TestModeMismatchGuard,test_paper_config_with_live_account_aborts,SEC-2: mode=paper but account id looks live -> abort before any order
+test_submit.py,TestModeMismatchGuard,test_live_config_with_paper_account_aborts,SEC-2: mode=live but account id looks paper -> abort before any order
+test_submit.py,TestModeMismatchGuard,test_live_config_with_live_account_proceeds,SEC-2: mode and account id agree (live) -> proceeds normally
+test_submit.py,TestModeMismatchGuard,test_empty_account_id_does_not_trip_the_guard,SEC-2 guard skips an unpopulated account_id rather than false-aborting
+test_preflight.py,TestAccountModeMatch,test_paper_mode_with_paper_account_passes,SEC-2: preflight reports account_mode_match OK for paper/paper
+test_preflight.py,TestAccountModeMatch,test_paper_mode_with_live_account_fails,SEC-2: preflight flags mode=paper against a live-looking account id
+test_preflight.py,TestAccountModeMatch,test_live_mode_with_paper_account_fails,SEC-2: preflight flags mode=live against a paper-looking account id
+test_preflight.py,TestAccountModeMatch,test_live_mode_with_live_account_passes,SEC-2: preflight reports account_mode_match OK for live/live
+test_preflight.py,TestAccountModeMatch,test_empty_account_id_skips_the_check_not_fails_it,SEC-2 check is skipped (not failed) when account_id is unpopulated
+test_record.py,TestSellFills,test_sell_flips_fifo_earliest_when_duplicate_open_rows,C-4: two OPEN rows for one symbol -> SELL flips the FIFO-earliest, not an arbitrary one
+test_submit.py,TestPlacementStatusPolarity,test_pending_submit_counts_as_placed,H-5: PendingSubmit counts as placed, not failed
+test_submit.py,TestPlacementStatusPolarity,test_api_pending_counts_as_placed,H-5: ApiPending counts as placed, not failed
+test_submit.py,TestPlacementStatusPolarity,test_empty_status_counts_as_placed,H-5: transient empty order status counts as placed, not failed
+test_submit.py,TestPlacementStatusPolarity,test_cancelled_still_counts_as_failed,H-5: Cancelled still correctly counts as failed
+test_migrations.py,TestLegacyDatabaseMigration,test_missing_columns_are_added,C-3: init_db adds perm_id/exit_perm_id/total_cash/open_positions_count to a pre-migration DB
+test_migrations.py,TestLegacyDatabaseMigration,test_indexes_are_created,C-3: init_db creates ix_trades_perm_id/ix_trades_exit_perm_id on a legacy DB
+test_migrations.py,TestLegacyDatabaseMigration,test_existing_data_is_preserved,C-3: migrating a legacy DB does not touch existing row data
+test_migrations.py,TestLegacyDatabaseMigration,test_schema_version_is_stamped,C-3: legacy DB is stamped at CURRENT_SCHEMA_VERSION after migration
+test_migrations.py,TestLegacyDatabaseMigration,test_second_init_db_is_a_no_op,C-3: re-running init_db on an already-migrated DB is idempotent (no dup columns/rows)
+test_migrations.py,TestFreshDatabaseMigration,test_fresh_db_lands_on_current_version,C-3: a brand-new DB is stamped current immediately, not treated as needing catch-up
+test_migrations.py,TestFreshDatabaseMigration,test_fresh_db_has_all_current_tables,C-3: fresh init_db creates the schema_version table itself
+test_migrations.py,TestRunMigrationsDirectly,test_no_op_when_already_current,C-3: run_migrations on an already-current DB changes nothing
+test_db.py,TestConfirmCloseFill,test_partial_close_does_not_clobber_entry_filled_quantity,H-3: partial close writes exit_filled_quantity without touching entry filled_quantity
+test_reconcile_drift.py,TestOrphanSellRecovery,test_partial_orphan_sell_preserves_entry_filled_quantity,H-3: partial orphan-SELL recovery preserves entry filled_quantity in exit_filled_quantity
+test_record.py,TestRequestedQuantityFromOpenOrder,test_still_working_order_uses_ib_total_quantity,H-2: still-open BUY records IB totalQuantity as requested_quantity, not fills-so-far
+test_record.py,TestRequestedQuantityFromOpenOrder,test_fully_resolved_order_falls_back_to_fills_sum,H-2: order no longer open falls back to fills-sum (correct in that case)
+test_record.py,TestRequestedQuantityFromOpenOrder,test_unrelated_open_order_does_not_affect_this_permid,H-2: open-orders map keyed correctly by permId, no cross-contamination
+test_submit.py,TestLastBarIsClosed,test_prior_day_bar_is_closed,H-1: a strictly-prior-day last bar is treated as closed
+test_submit.py,TestLastBarIsClosed,test_same_us_day_bar_is_not_closed,H-1: a last bar dated today's US session (DST-gap scenario) is not closed
+test_submit.py,TestLastBarIsClosed,test_empty_dataframe_is_not_closed,H-1: an empty candle DataFrame is not asserted as closed (caller's problem)
+test_submit.py,TestLastBarIsClosed,test_naive_now_is_rejected,H-1: a naive `now` raises rather than silently trusting host-local tz
+test_submit.py,TestBarFreshnessGuard,test_exit_holds_on_stale_bar_instead_of_evaluating,H-1: submit holds (does not SELL) on a stale same-US-day bar
+test_submit.py,TestBarFreshnessGuard,test_entry_skipped_on_stale_bar_instead_of_evaluating,H-1: submit skips a BUY candidate on a stale same-US-day bar
+test_submit.py,TestBarFreshnessGuard,test_closed_bar_with_explicit_now_still_evaluates_normally,H-1: explicit `now` plumbing does not break the ordinary closed-bar path
+test_market_calendar.py,TestIsUsTradingDay,test_ordinary_weekday_is_a_trading_day,H-4: an ordinary weekday is a NYSE trading day
+test_market_calendar.py,TestIsUsTradingDay,test_saturday_is_not_a_trading_day,H-4: Saturday is not a NYSE trading day
+test_market_calendar.py,TestIsUsTradingDay,test_sunday_is_not_a_trading_day,H-4: Sunday is not a NYSE trading day
+test_market_calendar.py,TestIsUsTradingDay,test_thanksgiving_2026_is_not_a_trading_day,H-4: Thanksgiving 2026 (the exact failure scenario) is not a trading day
+test_market_calendar.py,TestIsUsTradingDay,test_day_after_thanksgiving_2026_is_a_trading_day,H-4: the half-day after Thanksgiving is still a trading day
+test_market_calendar.py,TestIsUsTradingDay,test_new_years_day_is_not_a_trading_day,H-4: New Year's Day is not a trading day
+test_market_calendar.py,TestTodayUsEastern,test_normal_offset_matches_local_date,today_us_eastern resolves correctly under the normal (matched-DST) offset
+test_market_calendar.py,TestTodayUsEastern,test_dst_mismatch_still_resolves_correctly,today_us_eastern resolves the correct US calendar date during the Israel/US DST-mismatch window
+test_market_calendar.py,TestTodayUsEastern,test_naive_now_is_rejected,today_us_eastern rejects a naive now rather than trusting host-local tz
+test_market_calendar.py,TestTodayUsEastern,test_defaults_to_real_time_when_omitted,today_us_eastern defaults to real wall-clock time when now is omitted
+test_submit.py,TestNonTradingDayGuard,test_non_trading_day_aborts_before_anything_else,H-4: is_trading_day=False aborts before the double-run guard or any order
+test_submit.py,TestNonTradingDayGuard,test_trading_day_true_is_the_default_and_proceeds_normally,H-4: default is_trading_day=True preserves normal submit behavior
+test_preflight.py,TestMarketSessionCheck,test_trading_day_reports_ok,H-4: preflight reports market_session OK on an ordinary trading day
+test_preflight.py,TestMarketSessionCheck,test_holiday_still_reports_ok_but_flags_closed,H-4: preflight's market_session check never fails preflight on a holiday
+test_panic.py,TestCancelsOrdersFirst,test_cancel_count_recorded,panic_close_all records the cancelled-orders count from cancel_all_orders
+test_panic.py,TestCancelsOrdersFirst,test_no_positions_no_orders_placed,panic_close_all with zero positions places nothing and reports all_succeeded
+test_panic.py,TestClosesEveryPosition,test_long_position_sells_full_quantity,A long position is closed with a SELL at its full quantity
+test_panic.py,TestClosesEveryPosition,test_short_position_buys_to_cover,A short position is closed with a BUY at its absolute quantity
+test_panic.py,TestClosesEveryPosition,test_zero_quantity_position_skipped,A zero-quantity position row is skipped, not order-placed
+test_panic.py,TestClosesEveryPosition,test_multiple_positions_all_closed,Multiple held positions are all closed in one panic run
+test_panic.py,TestFailureAccounting,test_rejected_order_counts_as_failed_not_closed,A rejected (Cancelled-status) close counts as failed, not closed
+test_panic.py,TestFailureAccounting,test_exception_during_close_counts_as_failed,An exception while closing one symbol counts as failed with the error captured
+test_panic.py,TestFailureAccounting,test_one_bad_symbol_does_not_abort_the_rest,One symbol's exception does not stop panic from attempting the remaining positions
+test_panic.py,TestFailureAccounting,test_pending_submit_still_counts_as_closed,PendingSubmit counts as closed (shares H-5's failure-status definition with submit)
+test_panic.py,TestAllSucceededProperty,test_mixed_results_report_not_all_succeeded,Regression: all_succeeded reflects actual failures, not just attempt count (the audit's exact bug)
+test_backtest_engine.py,TestRealParityComparison,test_mixed_winners_and_losers_pick_same_symbols_same_order,Backtest and production trim helpers pick identical symbols in identical order for the same scenario
+test_backtest_engine.py,TestRealParityComparison,test_already_exiting_exclusion_matches,Both trim implementations agree: post-exits held count == max means no trim, identically
+test_backtest_engine.py,TestRealParityComparison,test_partial_trim_after_exits_matches,Both trim implementations queue the same remaining worst performer after partial exits
+test_backtest_engine.py,TestRealParityComparison,test_tie_break_order_matches,Both trim implementations break P&L ties in the same (insertion) order
+test_backtest_engine.py,TestRealParityComparison,test_under_cap_both_return_empty,Both trim implementations return empty when under cap
+test_submit.py,TestEmptyPositionGuard,test_db_reports_open_positions_ib_shows_none_aborts,C-1: DB reporting OPEN rows IB doesn't show at all aborts even with normal-looking cash
+test_submit.py,TestEmptyPositionGuard,test_both_signals_present_mentions_both_in_message,C-1: when both the cash-mismatch and DB-mismatch signals fire, the error message names both
+test_submit.py,TestEmptyPositionGuard,test_orphan_empty_position_strategies_does_not_trip_the_guard,C-1: an empty (not None) position_strategies map is not mistaken for a non-empty one
 test_membership.py,TestParseCurrentMembers,test_parses_symbols_in_order,Parses the constituents table's Symbol column into a normalized ticker list
 test_membership.py,TestParseCurrentMembers,test_normalizes_dotted_tickers,BRK.B normalizes to BRK-B via normalize_symbol
 test_membership.py,TestParseCurrentMembers,test_missing_table_raises,Raises ValueError naming the missing id when no constituents table is present
@@ -443,6 +524,10 @@ test_membership.py,TestPointInTimeMembers,test_before_earliest_recorded_change,a
 test_membership.py,TestMembershipTimeline,test_matches_point_in_time_members_at_every_breakpoint,The bisect-based fast path matches point_in_time_members exactly at every change breakpoint
 test_membership.py,TestMembershipTimeline,test_matches_point_in_time_members_mid_interval,The bisect-based fast path matches point_in_time_members exactly at mid-interval dates
 test_membership.py,TestMembershipTimeline,test_before_earliest_breakpoint,timeline.at() before the earliest breakpoint matches point_in_time_members at date.min
+test_membership.py,TestMembersEverInRange,test_range_before_earliest_breakpoint_uses_earliest_reconstructed_set,A range entirely before the earliest breakpoint unions to just the earliest reconstructed membership set
+test_membership.py,TestMembersEverInRange,test_single_day_range_matches_at,A single-day range (start == end) matches timeline.at() for that day exactly
+test_membership.py,TestMembersEverInRange,test_range_spanning_a_swap_includes_both_sides,A range straddling a same-row swap includes both the added and removed symbol, not just one side
+test_membership.py,TestMembersEverInRange,test_full_history_range_unions_every_reconstructed_set,A range covering the whole timeline unions every distinct reconstructed membership set
 test_membership.py,TestGenerateArtifactSource,test_output_is_valid_python,Generated module source compiles without a SyntaxError
 test_membership.py,TestGenerateArtifactSource,test_round_trips_members_and_changes,Compiling and exec'ing the generated source reproduces the same members and changes passed in
 test_membership.py,TestGenerateArtifactSource,test_changes_sorted_descending_by_date,The generated CHANGES list is sorted descending by effective date

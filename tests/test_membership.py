@@ -13,6 +13,7 @@ from vibe_trade.backtest.membership import (
     MembershipChange,
     build_membership_timeline,
     generate_artifact_source,
+    members_ever_in_range,
     parse_added_dates,
     parse_changes,
     parse_current_members,
@@ -206,6 +207,34 @@ class TestMembershipTimeline:
     def test_before_earliest_breakpoint(self):
         timeline = build_membership_timeline(_CURRENT, _CHANGES)
         assert timeline.at(date.min) == point_in_time_members(date.min, _CURRENT, _CHANGES)
+
+
+class TestMembersEverInRange:
+    """Feeds the backtest's bar-fetch step: which symbols need history at
+    all, as opposed to `.at()`'s "who's a member on this one day"."""
+
+    def test_range_before_earliest_breakpoint_uses_earliest_reconstructed_set(self):
+        timeline = build_membership_timeline(_CURRENT, _CHANGES)
+        result = members_ever_in_range(timeline, date(2018, 1, 1), date(2019, 1, 1))
+        assert result == frozenset({"AAPL", "WBA", "ETFC"})
+
+    def test_single_day_range_matches_at(self):
+        timeline = build_membership_timeline(_CURRENT, _CHANGES)
+        as_of = date(2021, 1, 1)
+        assert members_ever_in_range(timeline, as_of, as_of) == timeline.at(as_of)
+
+    def test_range_spanning_a_swap_includes_both_sides(self):
+        # 2022-01-01 -> 2025-01-01 straddles the 2024-03-01 SMCI/WBA swap:
+        # a symbol on *either* side must be included, not just whichever was
+        # a member on the range's boundary dates.
+        timeline = build_membership_timeline(_CURRENT, _CHANGES)
+        result = members_ever_in_range(timeline, date(2022, 1, 1), date(2025, 1, 1))
+        assert result == frozenset({"AAPL", "WBA", "SMCI"})
+
+    def test_full_history_range_unions_every_reconstructed_set(self):
+        timeline = build_membership_timeline(_CURRENT, _CHANGES)
+        result = members_ever_in_range(timeline, date.min, date(2026, 1, 1))
+        assert result == frozenset({"AAPL", "WBA", "ETFC", "SMCI"})
 
 
 class TestGenerateArtifactSource:

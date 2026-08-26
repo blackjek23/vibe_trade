@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import cast
 
 import pandas as pd
 import yfinance as yf
@@ -138,11 +139,16 @@ class DataProvider:
     @staticmethod
     def _download(symbol: str, period: str, interval: str) -> pd.DataFrame:
         """Synchronous yfinance call — wrapped in asyncio.to_thread."""
-        return yf.download(
-            tickers=symbol,
-            period=period,
-            interval=interval,
-            progress=False,
-            auto_adjust=True,
-            multi_level_index=False,
+        # yfinance ships no type stubs, so mypy sees yf.download(...) as Any;
+        # cast rather than leave the function's declared return type lying.
+        return cast(
+            pd.DataFrame,
+            yf.download(
+                tickers=symbol,
+                period=period,
+                interval=interval,
+                progress=False,
+                auto_adjust=True,
+                multi_level_index=False,
+            ),
         )

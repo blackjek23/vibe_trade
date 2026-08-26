@@ -11,6 +11,9 @@ window had already opened. These tests pin the two behaviours that matter:
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from vibe_trade.broker.models import AccountSummary, Position
@@ -146,3 +149,74 @@ class TestPositionCap:
         broker = MockBroker(positions=[_pos(f"S{i}") for i in range(50)])
         result = await _run(broker, max_positions=50)
         assert result.ok
+
+
+class TestMarketSessionCheck:
+    """H-4: preflight reports today's US market-calendar status, but never
+    fails on it -- a holiday is a valid day to do nothing, not a problem.
+    """
+
+    async def test_trading_day_reports_ok(self):
+        now = datetime(2026, 3, 9, 10, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))  # Monday
+        result = await _run(MockBroker(), now=now)
+        assert result.ok
+        check = next(c for c in result.checks if c.name == "market_session")
+        assert check.ok
+        assert "2026-03-09" in check.detail
+        assert "open" in check.detail
+
+    async def test_holiday_still_reports_ok_but_flags_closed(self):
+        now = datetime(2026, 11, 26, 10, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))  # Thanksgiving
+        result = await _run(MockBroker(), now=now)
+        assert result.ok  # informational only -- must not fail preflight
+        check = next(c for c in result.checks if c.name == "market_session")
+        assert check.ok
+        assert "CLOSED" in check.detail
+
+
+class TestAccountModeMatch:
+    """SEC-2: flag when the account IB Gateway is serving doesn't match the
+    configured mode. See PROJECT_EVALUATION.md.
+    """
+
+    async def test_paper_mode_with_paper_account_passes(self):
+        result = await _run(MockBroker(), mode="paper")
+        assert result.ok
+        names = [c.name for c in result.checks]
+        assert "account_mode_match" in names
+
+    async def test_paper_mode_with_live_account_fails(self):
+        broker = MockBroker(account=AccountSummary(
+            account_id="U1234567", net_liquidation=100_000.0, total_cash=100_000.0,
+            unrealized_pnl=0.0, realized_pnl=0.0,
+        ))
+        result = await _run(broker, mode="paper")
+        assert not result.ok
+        mismatch = next(c for c in result.failures if c.name == "account_mode_match")
+        assert "live" in mismatch.detail
+
+    async def test_live_mode_with_paper_account_fails(self):
+        result = await _run(MockBroker(), mode="live")
+        assert not result.ok
+        mismatch = next(c for c in result.failures if c.name == "account_mode_match")
+        assert "paper" in mismatch.detail
+
+    async def test_live_mode_with_live_account_passes(self):
+        broker = MockBroker(account=AccountSummary(
+            account_id="U1234567", net_liquidation=100_000.0, total_cash=100_000.0,
+            unrealized_pnl=0.0, realized_pnl=0.0,
+        ))
+        result = await _run(broker, mode="live")
+        assert result.ok
+
+    async def test_empty_account_id_skips_the_check_not_fails_it(self):
+        """Gateway mid-login (empty id) is already caught by ib_account --
+        this check must not pile on a confusing second failure for it.
+        """
+        broker = MockBroker(account=AccountSummary(
+            account_id="", net_liquidation=0.0, total_cash=0.0,
+            unrealized_pnl=0.0, realized_pnl=0.0,
+        ))
+        result = await _run(broker)
+        names = [c.name for c in result.checks]
+        assert "account_mode_match" not in names

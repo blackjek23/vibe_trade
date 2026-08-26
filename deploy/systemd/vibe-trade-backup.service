@@ -1,0 +1,21 @@
+[Unit]
+Description=vibe-trade nightly DB backup (.backup + integrity_check + sha256)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=vibe
+Group=vibe
+WorkingDirectory=/opt/vibe-trade/deploy
+ExecStartPre=/usr/bin/mkdir -p /opt/vibe-trade/backups
+# Digest-pinned to match deploy/Dockerfile (PROJECT_EVALUATION.md) -- refresh
+# both together with `docker buildx imagetools inspect python:3.11-slim`.
+ExecStart=/usr/bin/docker run --rm \
+    -v deploy_vibe-data:/data:ro \
+    -v /opt/vibe-trade/backups:/backup \
+    -v /opt/vibe-trade/scripts:/scripts:ro \
+    python:3.11-slim@sha256:be1575ed968de893bd54f4c56315ff7c4736ce522c1bca08fd521731aafc0d76 \
+    python /scripts/nightly_backup.py --db /data/vibe_trade.db --out /backup --keep-days 14
+StandardOutput=append:/opt/vibe-trade/deploy/logs/cron.log
+StandardError=append:/opt/vibe-trade/deploy/logs/cron.log

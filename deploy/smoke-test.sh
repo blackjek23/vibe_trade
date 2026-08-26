@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Smoke test: run all three V2 jobs sequentially against paper mode.
+# Smoke test: run all four V2 daily jobs sequentially against paper mode.
 #
 # Prerequisites:
 #   - IB Gateway running on localhost:7497 (paper account)
@@ -12,11 +12,15 @@ set -euo pipefail
 # Usage:
 #   cd deploy && ./smoke-test.sh
 
+echo "=== Smoke test: preflight (15:50 job) ==="
+docker compose run --rm preflight
+
+echo ""
 echo "=== Smoke test: submit (16:00 job) ==="
 docker compose run --rm submit
 
 echo ""
-echo "=== Smoke test: record (16:25 job) ==="
+echo "=== Smoke test: record (16:35 job) ==="
 docker compose run --rm record
 
 echo ""

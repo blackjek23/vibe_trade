@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
+from vibe_trade.broker.models import OpenOrder
 from vibe_trade.db.models import Trade
 from vibe_trade.db.repository import TradeRepository
 from vibe_trade.jobs.record import run_record
@@ -41,10 +42,18 @@ def _fill(
 
 
 class MockBroker:
-    """Just enough of the broker surface for run_record: `ib.fills()`."""
+    """Just enough of the broker surface for run_record: `ib.fills()` and
+    `get_open_orders()` (H-2: the source of a still-working order's true
+    original ask). Empty by default -- matches "order already fully
+    resolved by record time", the common case every pre-existing test uses.
+    """
 
-    def __init__(self, fills):
+    def __init__(self, fills, open_orders=None):
         self.ib = SimpleNamespace(fills=lambda: list(fills))
+        self._open_orders = open_orders or []
+
+    async def get_open_orders(self):
+        return list(self._open_orders)
 
 
 # ============================================================== tests
@@ -148,6 +157,55 @@ class TestBuyFills:
         assert row.strategy_name == "ma_crossover"
 
 
+class TestRequestedQuantityFromOpenOrder:
+    """H-2: a BUY still working at record time must record IB's live
+    totalQuantity as requested_quantity, not the shares filled so far --
+    otherwise reconcile's later filled == requested check inverts.
+    """
+
+    async def test_still_working_order_uses_ib_total_quantity(self, db_session: Session):
+        """100 requested, only 60 filled by record time, order still open."""
+        broker = MockBroker(
+            fills=[_fill(perm_id=111, order_id=21, symbol="T", side="BOT", shares=60)],
+            open_orders=[OpenOrder(symbol="T", side="BUY", quantity=100, perm_id=111, status="Submitted")],
+        )
+        repo = TradeRepository(db_session)
+        result = await run_record(broker=broker, repo=repo)
+
+        assert result.buys_inserted == 1
+        row = db_session.query(Trade).first()
+        assert row.requested_quantity == 100  # NOT 60
+
+    async def test_fully_resolved_order_falls_back_to_fills_sum(self, db_session: Session):
+        """Order no longer open (fully filled or cancelled) by record time --
+        fills-so-far is the only signal left, and it's correct in that case.
+        """
+        broker = MockBroker(
+            fills=[_fill(perm_id=222, order_id=22, symbol="T", side="BOT", shares=10)],
+            open_orders=[],  # not in the open-orders snapshot at all
+        )
+        repo = TradeRepository(db_session)
+        result = await run_record(broker=broker, repo=repo)
+
+        assert result.buys_inserted == 1
+        row = db_session.query(Trade).first()
+        assert row.requested_quantity == 10
+
+    async def test_unrelated_open_order_does_not_affect_this_permid(self, db_session: Session):
+        broker = MockBroker(
+            fills=[_fill(perm_id=333, order_id=23, symbol="T", side="BOT", shares=10)],
+            open_orders=[
+                OpenOrder(symbol="X", side="BUY", quantity=999, perm_id=444, status="Submitted"),
+            ],
+        )
+        repo = TradeRepository(db_session)
+        result = await run_record(broker=broker, repo=repo)
+
+        assert result.buys_inserted == 1
+        row = db_session.query(Trade).first()
+        assert row.requested_quantity == 10
+
+
 class TestStrategyAttribution:
     """Session L: strategy_name comes from the fill's orderRef, not a constant."""
 
@@ -233,6 +291,38 @@ class TestSellFills:
         r2 = await run_record(broker=broker, repo=repo)
         assert r2.sells_flipped == 0
         assert r2.sells_skipped_dup == 1
+
+    async def test_sell_flips_fifo_earliest_when_duplicate_open_rows(self, db_session: Session):
+        """C-4 regression: two OPEN rows for the same symbol (the phantom/
+        duplicate scenario reconcile._sweep_open_rows exists to catch) must
+        resolve the SELL onto the FIFO-earliest row, not an arbitrary one.
+        """
+        repo = TradeRepository(db_session)
+        older = repo.create_submitted_buy(
+            symbol="F", strategy_name="donchian", requested_quantity=50,
+            ib_order_id=1, submitted_at=datetime(2026, 4, 20, 16, 0), perm_id=111,
+        )
+        repo.confirm_buy_fill(
+            older.id, entry_price=10.0, filled_quantity=50,
+            entry_time=datetime(2026, 4, 20, 16, 30), status="OPEN",
+        )
+        newer = repo.create_submitted_buy(
+            symbol="F", strategy_name="donchian", requested_quantity=30,
+            ib_order_id=2, submitted_at=datetime(2026, 4, 27, 16, 0), perm_id=222,
+        )
+        repo.confirm_buy_fill(
+            newer.id, entry_price=12.0, filled_quantity=30,
+            entry_time=datetime(2026, 4, 27, 16, 30), status="OPEN",
+        )
+
+        broker = MockBroker(
+            fills=[_fill(perm_id=333, order_id=23, symbol="F", side="SLD", shares=50)]
+        )
+        result = await run_record(broker=broker, repo=repo)
+
+        assert result.sells_flipped == 1
+        assert db_session.get(Trade, older.id).status == "PENDING_CLOSE"
+        assert db_session.get(Trade, newer.id).status == "OPEN"
 
     async def test_sell_with_no_open_trade_skipped(self, db_session: Session):
         # No OPEN trade for "F" exists; SELL fill can't be matched.

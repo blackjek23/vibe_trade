@@ -13,6 +13,9 @@ Donchian signal recipe used throughout (see test_donchian.py for the spec):
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pandas as pd
 import pytest
 
@@ -24,7 +27,7 @@ from vibe_trade.broker.models import (
 )
 from vibe_trade.config import RiskConfig
 from vibe_trade.data.provider import DataProvider
-from vibe_trade.jobs.submit import run_submit
+from vibe_trade.jobs.submit import _last_bar_is_closed, run_submit
 from vibe_trade.risk.manager import RiskManager
 from vibe_trade.strategy.base import BaseStrategy, SignalResult, SignalType
 from vibe_trade.strategy.examples.donchian import DonchianStrategy
@@ -110,11 +113,19 @@ class MockBroker:
         return self._place_result_factory(order_request, idx)
 
 
-def _account(net_liq: float = 100_000.0) -> AccountSummary:
+def _account(
+    net_liq: float = 100_000.0, total_cash: float | None = None,
+    account_id: str = "DU000001",
+) -> AccountSummary:
+    """Default total_cash == net_liq: a flat account (no positions) should
+    hold ~all its equity as cash (C-1's empty-position guard relies on this).
+    Tests exercising that guard, or a mix of held positions and cash, pass
+    total_cash explicitly.
+    """
     return AccountSummary(
-        account_id="DU000001",
+        account_id=account_id,
         net_liquidation=net_liq,
-        total_cash=net_liq * 0.4,
+        total_cash=net_liq if total_cash is None else total_cash,
         unrealized_pnl=0.0,
         realized_pnl=0.0,
     )
@@ -887,3 +898,364 @@ class TestNoDbWrites:
         assert "db_session" not in params
         assert "session_factory" not in params
         assert "db" not in params
+
+
+def _candles_ending(last_date: str, close: float, period: int = 20) -> pd.DataFrame:
+    """Like `_candles_for`, but the last bar lands on a specific calendar
+    date -- needed to control whether it looks "closed" relative to a given
+    `now` (H-1 bar-freshness guard).
+    """
+    n = period + 1
+    index = pd.date_range(end=last_date, periods=n, freq="D")
+    return pd.DataFrame(
+        {
+            "open": [99.5] * period + [close],
+            "high": [100.0] * period + [max(close, 100.0)],
+            "low": [99.0] * period + [min(close, 99.0)],
+            "close": [99.5] * period + [close],
+            "volume": [1000] * n,
+        },
+        index=index,
+    )
+
+
+class TestLastBarIsClosed:
+    """H-1: distinguish a closed prior-day bar from a live intraday quote
+    that lands as the final row during the Israel/US DST mismatch.
+    """
+
+    def test_prior_day_bar_is_closed(self):
+        candles = _candles_ending("2026-03-05", close=101.0)  # Thursday
+        now = datetime(2026, 3, 6, 16, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))  # Friday
+        assert _last_bar_is_closed(candles, now=now) is True
+
+    def test_same_us_day_bar_is_not_closed(self):
+        """The DST-gap scenario: last bar is today's (in-progress) US session."""
+        candles = _candles_ending("2026-03-09", close=101.0)  # Monday
+        now = datetime(2026, 3, 9, 16, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+        assert _last_bar_is_closed(candles, now=now) is False
+
+    def test_empty_dataframe_is_not_closed(self):
+        assert _last_bar_is_closed(pd.DataFrame(), now=datetime.now(ZoneInfo("UTC"))) is False
+
+    def test_naive_now_is_rejected(self):
+        candles = _candles_ending("2026-03-05", close=101.0)
+        with pytest.raises(ValueError, match="timezone-aware"):
+            _last_bar_is_closed(candles, now=datetime(2026, 3, 6, 16, 0))
+
+
+class TestBarFreshnessGuard:
+    """H-1 integration: run_submit must not evaluate a stale (same-US-day) bar
+    as though it were a closed prior day, on either the exit or entry side.
+    """
+
+    async def test_exit_holds_on_stale_bar_instead_of_evaluating(self):
+        broker = MockBroker(_account(), [_position("AAPL", qty=12)])
+        # Would SELL if evaluated (close < prior 20-day low), but the bar is
+        # today's US date per `now` -- must be held, not acted on.
+        dp = MockDataProvider({"AAPL": _candles_ending("2026-03-09", close=98.0)})
+        now = datetime(2026, 3, 9, 16, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=[], now=now,
+        )
+
+        assert result.stale_bars_skipped == 1
+        assert result.exits_signaled == 0
+        assert broker.orders_placed == []
+
+    async def test_entry_skipped_on_stale_bar_instead_of_evaluating(self):
+        broker = MockBroker(_account(), [])
+        # Would BUY if evaluated (close > prior 20-day high).
+        dp = MockDataProvider({"AAPL": _candles_ending("2026-03-09", close=101.0)})
+        now = datetime(2026, 3, 9, 16, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["AAPL"], now=now,
+        )
+
+        assert result.stale_bars_skipped == 1
+        assert result.entries_signaled == 0
+        assert broker.orders_placed == []
+
+    async def test_closed_bar_with_explicit_now_still_evaluates_normally(self):
+        """Sanity check: passing `now` explicitly doesn't itself break the
+        ordinary (bar-is-closed) path."""
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"AAPL": _candles_ending("2026-03-05", close=101.0)})
+        now = datetime(2026, 3, 6, 16, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["AAPL"], now=now,
+        )
+
+        assert result.stale_bars_skipped == 0
+        assert result.entries_placed == 1
+
+
+class TestNonTradingDayGuard:
+    """H-4: submit must not evaluate anything on a non-trading day. The CLI
+    computes `is_trading_day` from the real market calendar before even
+    connecting to IB; run_submit takes it as an explicit parameter rather
+    than computing it from wall-clock time itself, so this stays
+    deterministic regardless of which day the test suite runs on.
+    """
+
+    async def test_non_trading_day_aborts_before_anything_else(self):
+        broker = MockBroker(
+            _account(), [_position("AAPL", qty=12)],
+            today_order_refs={"donchian"},  # would also trip the double-run guard
+        )
+        dp = MockDataProvider({"AAPL": _candles_for(close=98.0)})  # would SELL
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["AAPL"], is_trading_day=False,
+        )
+
+        assert result.aborted_non_trading_day is True
+        assert result.aborted_duplicate_run is False  # never got that far
+        assert broker.orders_placed == []
+
+    async def test_trading_day_true_is_the_default_and_proceeds_normally(self):
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"AAPL": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["AAPL"],
+        )
+
+        assert result.aborted_non_trading_day is False
+        assert result.entries_placed == 1
+
+
+class TestPlacementStatusPolarity:
+    """H-5: submit must whitelist *failure* statuses, not success statuses.
+
+    The previous approach (PLACEMENT_SUCCESS_STATUSES) omitted PendingSubmit,
+    ApiPending and the empty string -- all legitimate for 5 seconds after
+    placeOrder() under load -- so a busy open counted live orders as failed
+    and breached the position cap. See PROJECT_EVALUATION.md.
+    """
+
+    @staticmethod
+    def _factory_with_status(status: str):
+        def factory(req, idx):
+            return OrderResult(
+                order_id=idx + 100, symbol=req.symbol, side=req.side,
+                quantity=req.quantity, status=status,
+            )
+        return factory
+
+    async def test_pending_submit_counts_as_placed(self):
+        broker = MockBroker(
+            _account(), [], place_result_factory=self._factory_with_status("PendingSubmit"),
+        )
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["GOOG"],
+        )
+        assert result.entries_placed == 1
+        assert result.entries_failed == 0
+
+    async def test_api_pending_counts_as_placed(self):
+        broker = MockBroker(
+            _account(), [], place_result_factory=self._factory_with_status("ApiPending"),
+        )
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["GOOG"],
+        )
+        assert result.entries_placed == 1
+        assert result.entries_failed == 0
+
+    async def test_empty_status_counts_as_placed(self):
+        broker = MockBroker(
+            _account(), [], place_result_factory=self._factory_with_status(""),
+        )
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["GOOG"],
+        )
+        assert result.entries_placed == 1
+        assert result.entries_failed == 0
+
+    async def test_cancelled_still_counts_as_failed(self):
+        broker = MockBroker(
+            _account(), [], place_result_factory=self._factory_with_status("Cancelled"),
+        )
+        dp = MockDataProvider({"GOOG": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker, strategies=_strats(), data_provider=dp,
+            risk_manager=_risk_mgr(), universe=["GOOG"],
+        )
+        assert result.entries_placed == 0
+        assert result.entries_failed == 1
+        assert result.errors  # order status surfaced for the operator
+
+
+class TestEmptyPositionGuard:
+    """C-1: an empty `get_positions()` read must not be trusted as a genuinely
+    flat account unless the cash balance agrees. See PROJECT_EVALUATION.md.
+    """
+
+    async def test_empty_positions_with_deployed_cash_aborts(self):
+        """Cash well below net_liq with 0 positions read -> suspected failed
+        read. Nothing should be placed, exits included.
+        """
+        broker = MockBroker(_account(total_cash=40_000.0), [])
+        dp = MockDataProvider({"AAPL": _candles_for(close=101.0)})  # would BUY
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["AAPL"],
+        )
+        assert result.aborted_empty_position_read is True
+        assert broker.orders_placed == []
+        assert any("failed/racing position read" in e for e in result.errors)
+
+    async def test_empty_positions_with_flat_cash_proceeds(self):
+        """Cash ~= net_liq with 0 positions read -> genuinely flat, proceed."""
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"AAPL": _candles_for(close=101.0)})  # BUY
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["AAPL"],
+        )
+        assert result.aborted_empty_position_read is False
+        assert result.entries_placed == 1
+
+    async def test_held_positions_skip_the_guard_regardless_of_cash(self):
+        """Guard only applies when positions comes back empty."""
+        broker = MockBroker(
+            _account(total_cash=1_000.0), [_position("AAPL", qty=12)],
+        )
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+        )
+        assert result.aborted_empty_position_read is False
+
+    async def test_db_reports_open_positions_ib_shows_none_aborts(self):
+        """C-1's other half: even with cash that looks perfectly flat, the
+        DB reporting OPEN rows IB doesn't see at all is independently
+        suspicious -- mirrors reconcile._sweep_open_rows's own instinct.
+        """
+        broker = MockBroker(_account(), [])  # cash looks fine (flat)
+        dp = MockDataProvider({"AAPL": _candles_for(close=101.0)})  # would BUY
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["AAPL"],
+            position_strategies={"AAPL": "donchian"},  # DB thinks this is OPEN
+        )
+        assert result.aborted_empty_position_read is True
+        assert broker.orders_placed == []
+        assert any("DB reports" in e for e in result.errors)
+
+    async def test_both_signals_present_mentions_both_in_message(self):
+        broker = MockBroker(_account(total_cash=40_000.0), [])
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+            position_strategies={"AAPL": "donchian", "MSFT": "sma"},
+        )
+        assert result.aborted_empty_position_read is True
+        msg = result.errors[0]
+        assert "total_cash" in msg
+        assert "DB reports" in msg
+        assert "2 OPEN position" in msg
+
+    async def test_orphan_empty_position_strategies_does_not_trip_the_guard(self):
+        """An empty (not None) position_strategies map -- the CLI's genuine
+        "no open trades in the DB" case -- must not be mistaken for a
+        non-empty one."""
+        broker = MockBroker(_account(), [])
+        dp = MockDataProvider({"AAPL": _candles_for(close=101.0)})
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=dp,
+            risk_manager=_risk_mgr(),
+            universe=["AAPL"],
+            position_strategies={},
+        )
+        assert result.aborted_empty_position_read is False
+        assert result.entries_placed == 1
+
+
+class TestModeMismatchGuard:
+    """SEC-2: config `mode` must match the account IB Gateway is actually
+    serving before any order is placed. See PROJECT_EVALUATION.md.
+    """
+
+    async def test_paper_config_with_live_account_aborts(self):
+        broker = MockBroker(_account(account_id="U1234567"), [])
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+            mode="paper",
+        )
+        assert result.aborted_mode_mismatch is True
+        assert broker.orders_placed == []
+        assert any("config mode='paper'" in e for e in result.errors)
+
+    async def test_live_config_with_paper_account_aborts(self):
+        broker = MockBroker(_account(account_id="DU000001"), [])
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+            mode="live",
+        )
+        assert result.aborted_mode_mismatch is True
+        assert broker.orders_placed == []
+
+    async def test_live_config_with_live_account_proceeds(self):
+        broker = MockBroker(_account(account_id="U1234567"), [])
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+            mode="live",
+        )
+        assert result.aborted_mode_mismatch is False
+
+    async def test_empty_account_id_does_not_trip_the_guard(self):
+        """An unpopulated account_id is preflight's job to catch (Gateway
+        mid-login); this guard must not misfire on it as a false mismatch.
+        """
+        broker = MockBroker(_account(account_id=""), [])
+        result = await run_submit(
+            broker=broker,
+            strategies=_strats(),
+            data_provider=MockDataProvider(),
+            risk_manager=_risk_mgr(),
+            universe=[],
+        )
+        assert result.aborted_mode_mismatch is False

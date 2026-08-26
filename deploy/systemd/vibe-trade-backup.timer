@@ -1,0 +1,14 @@
+[Unit]
+Description=Run vibe-trade backup at 23:45 Asia/Jerusalem, every day
+# Not tied to the US market clock -- runs 7 days/week (a plain weekday-only
+# schedule left the account exposed to losing a full trading day's history
+# on a weekend disk failure, PROJECT_EVALUATION.md), always after reconcile
+# regardless of which DST regime is active (see the README for the math).
+
+[Timer]
+OnCalendar=*-*-* 23:45:00 Asia/Jerusalem
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

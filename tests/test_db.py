@@ -210,6 +210,26 @@ class TestConfirmCloseFill:
         assert closed.pnl == 50.0
         assert closed.pnl_pct == 2.7
 
+    def test_partial_close_does_not_clobber_entry_filled_quantity(self, db_session: Session):
+        """H-3 regression: a partial exit must not overwrite the entry-leg
+        filled_quantity. Before the fix this destroyed the cost basis and
+        made the un-sold remainder invisible to every OPEN-based query.
+        """
+        trade = self._pending_close(db_session)  # entry filled_quantity=10
+        repo = TradeRepository(db_session)
+        partial = repo.confirm_close_fill(
+            trade_id=trade.id,
+            exit_price=190.0,
+            filled_quantity=6,  # only 6 of 10 sold
+            exit_time=datetime(2026, 4, 21, 16, 40),
+            pnl=30.0,
+            pnl_pct=2.7,
+            status="PARTIALLY_FILLED",
+        )
+        assert partial.status == "PARTIALLY_FILLED"
+        assert partial.filled_quantity == 10  # entry leg untouched
+        assert partial.exit_filled_quantity == 6  # exit leg's own column
+
     def test_cancelled_reverts_to_open(self, db_session: Session):
         """SELL never filled → position stays, trade goes back to OPEN."""
         trade = self._pending_close(db_session)

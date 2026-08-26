@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import date
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Coroutine, Optional
 
 import typer
 from rich.console import Console
@@ -89,7 +89,7 @@ def _get_notifier(config):
 def _run_with_crash_alert(
     job_name: str,
     config,
-    coro_factory: Callable[..., object],
+    coro_factory: Callable[..., Coroutine[Any, Any, object]],
     **factory_kwargs,
 ) -> None:
     """Run an async job with a top-level safety net.
@@ -169,6 +169,12 @@ def _format_submit_msg(result, today) -> str:
         lines.append(
             f"Entries: {result.entries_placed} placed, {result.entries_failed} failed"
         )
+    if result.stale_bars_skipped:
+        lines.append(
+            f"[WARN] {result.stale_bars_skipped} symbol(s) skipped: last bar "
+            f"was today's US date, not closed (H-1 -- possible Israel/US DST "
+            f"mismatch, check the clock)"
+        )
     if result.errors:
         lines.append(f"{len(result.errors)} error(s):")
         for err in result.errors[:10]:
@@ -215,8 +221,14 @@ def _format_reconcile_msg(result, opened, closed, pnl, today) -> str:
             sign = "+" if (t.pnl or 0) >= 0 else "-"
             amount = abs(t.pnl or 0)
             pnl_str = f"{sign}${amount:,.2f}"
+            # exit_filled_quantity is the SELL leg's own column (H-3);
+            # filled_quantity is the entry (BUY) leg and no longer holds the
+            # exit amount. Fall back to it only for rows closed before this
+            # column existed.
+            exit_qty = getattr(t, "exit_filled_quantity", None)
+            sold_qty = exit_qty if exit_qty is not None else t.filled_quantity
             lines.append(
-                f"{t.symbol:<7} SELL {t.filled_quantity:>4}  {pnl_str}"
+                f"{t.symbol:<7} SELL {sold_qty:>4}  {pnl_str}"
             )
         lines.append("```")
 
@@ -262,6 +274,7 @@ async def _run_submit_cli(config, *, force: bool = False) -> None:
     from datetime import date as _date
 
     from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.data.market_calendar import is_us_trading_day, today_us_eastern
     from vibe_trade.data.provider import DataProvider
     from vibe_trade.data.universe import load_universe
     from vibe_trade.db.engine import init_db as _init
@@ -269,6 +282,18 @@ async def _run_submit_cli(config, *, force: bool = False) -> None:
     from vibe_trade.jobs.submit import SUBMIT_CLIENT_ID, run_submit
     from vibe_trade.risk.manager import RiskManager
     from vibe_trade.strategy.registry import build_strategies
+
+    # H-4: the `* * 1-5` cron schedule fires on US market holidays (~9/year).
+    # Checked here, before even connecting to IB, so a holiday costs nothing
+    # more than this one calendar lookup -- no stray day-orders get placed
+    # for the double-run guard to trip over on the next real session.
+    today_et = today_us_eastern()
+    if not is_us_trading_day(today_et):
+        msg = f"{today_et.isoformat()} is not a US market trading day -- nothing to do."
+        console.print(f"[dim]{msg}[/dim]")
+        notifier = _get_notifier(config)
+        await notifier.notify_summary(f"[SUBMIT] {today_et.isoformat()}\n{msg}")
+        return
 
     broker_config = config.broker.model_copy()
     broker_config.client_id = SUBMIT_CLIENT_ID
@@ -311,6 +336,7 @@ async def _run_submit_cli(config, *, force: bool = False) -> None:
             position_strategies=position_strategies,
             max_positions=config.risk.max_open_positions,
             force=force,
+            mode=config.general.mode,
         )
     finally:
         await broker.disconnect()
@@ -318,7 +344,7 @@ async def _run_submit_cli(config, *, force: bool = False) -> None:
     _print_submit_summary(result)
 
     msg = _format_submit_msg(result, _date.today())
-    if result.errors:
+    if result.errors or result.stale_bars_skipped:
         await notifier.notify_error(msg)
     else:
         await notifier.notify_summary(msg)
@@ -369,6 +395,12 @@ def _print_submit_summary(result) -> None:
         console.print(
             f"[dim]{result.entries_skipped_sizing} BUY signal(s) skipped by sizer "
             f"(at cap or 1 share > target)[/dim]"
+        )
+    if result.stale_bars_skipped > 0:
+        console.print(
+            f"[yellow]{result.stale_bars_skipped} symbol(s) skipped: last bar "
+            f"was today's US date, not closed (H-1 -- check for a DST "
+            f"mismatch)[/yellow]"
         )
     if result.errors:
         console.print(f"\n[red]{len(result.errors)} error(s):[/red]")
@@ -654,7 +686,22 @@ def refresh_sp500_membership() -> None:
 def backtest(
     start: str = typer.Option(..., "--start", help="Start date YYYY-MM-DD"),
     end: str = typer.Option(..., "--end", help="End date YYYY-MM-DD (exclusive)"),
-    top_n: int = typer.Option(100, "--top-n", help="Top N S&P 500 by market cap"),
+    top_n: int = typer.Option(100, "--top-n", help="Top N S&P 500 by market cap (ignored with --universe sp500)"),
+    universe_mode: str = typer.Option(
+        "top100", "--universe",
+        help="Universe source: 'top100' (today's top-N by market cap, "
+             "survivorship-biased -- see PROJECT_EVALUATION.md C-2) or "
+             "'sp500' (full point-in-time membership; requires "
+             "`vibe-trade refresh-sp500-membership` to have been run at least once)",
+    ),
+    friction_mode: str = typer.Option(
+        "none", "--friction",
+        help="Cost model: 'none' (zero frictions, the historical default), "
+             "'median' (measured 2026-05..07 paper-run slippage, base case), "
+             "or 'stress' (same run's mean slippage -- right-skewed by a few "
+             "bad fills). Both costed modes add IB per-share commission. See "
+             "backtest.engine.Frictions and docs/playbooks/go-live-criteria.md",
+    ),
     pct: float = typer.Option(0.04, "--pct", help="Per-position size as fraction of net_liq"),
     max_positions: int = typer.Option(25, "--max-positions", help="Position cap"),
     equity: float = typer.Option(100_000.0, "--equity", help="Starting equity"),
@@ -674,7 +721,9 @@ def backtest(
 
     Select the strategy with --strategy (default donchian). Default settings
     differ from production: top-100 / 4% / 25-cap (vs production's full universe
-    / 1.8% / 50-cap) for cleaner read-out per docs/ROADMAP.md Session I.
+    / 1.8% / 50-cap) for cleaner read-out per docs/ROADMAP.md Session I. Frictions
+    default to none, matching every backtest run before this flag existed --
+    pass --friction median (or stress) to cost a run.
     """
     config = load_config(config_path)
     _setup_logging(config.general.log_level)
@@ -682,6 +731,8 @@ def backtest(
         start=date.fromisoformat(start),
         end=date.fromisoformat(end),
         top_n=top_n,
+        universe_mode=universe_mode,
+        friction_mode=friction_mode,
         pct=pct,
         max_positions=max_positions,
         equity=equity,
@@ -692,7 +743,8 @@ def backtest(
 
 
 def _run_backtest_cli(
-    *, start, end, top_n: int, pct: float, max_positions: int,
+    *, start, end, top_n: int, universe_mode: str = "top100", friction_mode: str = "none",
+    pct: float, max_positions: int,
     equity: float, strategy_id: str, output_dir: str | None, force_refresh: bool,
 ) -> None:
     import json
@@ -700,28 +752,78 @@ def _run_backtest_cli(
     from datetime import datetime as _dt
 
     from vibe_trade.backtest.data import fetch_and_cache_bars
-    from vibe_trade.backtest.engine import run_backtest
+    from vibe_trade.backtest.engine import (
+        IB_COMMISSION_MIN,
+        IB_COMMISSION_PER_SHARE,
+        MEASURED_SLIPPAGE_BPS_MEAN,
+        MEASURED_SLIPPAGE_BPS_MEDIAN,
+        Frictions,
+        run_backtest,
+    )
     from vibe_trade.backtest.metrics import compute_metrics
-    from vibe_trade.data.sp100_top import LAST_UPDATED, SP100_TOP_BY_MCAP
     from vibe_trade.strategy.registry import build_strategy
 
     strategy = build_strategy(strategy_id)
 
+    # ---------------------------------------------------------- frictions
+    if friction_mode == "none":
+        frictions = None
+    elif friction_mode in ("median", "stress"):
+        slippage_bps = MEASURED_SLIPPAGE_BPS_MEDIAN if friction_mode == "median" else MEASURED_SLIPPAGE_BPS_MEAN
+        frictions = Frictions(
+            slippage_bps=slippage_bps,
+            commission_per_share=IB_COMMISSION_PER_SHARE,
+            commission_min=IB_COMMISSION_MIN,
+        )
+    else:
+        console.print(f"[red]ERROR:[/red] unknown --friction '{friction_mode}' (want none, median, or stress)")
+        raise typer.Exit(code=1)
+    if frictions is None:
+        console.print("  frictions: none (zero-cost fills)")
+    else:
+        console.print(
+            f"  frictions: {friction_mode}  slippage={frictions.slippage_bps:.1f}bps/leg  "
+            f"commission=${frictions.commission_per_share}/sh (${frictions.commission_min:.2f} min)"
+        )
+
     # ---------------------------------------------------------- universe
     console.print(
         f"[bold]Backtest[/bold] {start} -> {end}  strategy={strategy.name}  "
-        f"top_n={top_n}  pct={pct:.3f}  max_pos={max_positions}  "
+        f"universe={universe_mode}  pct={pct:.3f}  max_pos={max_positions}  "
         f"equity=${equity:,.0f}"
     )
-    if not SP100_TOP_BY_MCAP:
+    membership = None
+    if universe_mode == "sp500":
+        from vibe_trade.backtest.membership import load_default_timeline, members_ever_in_range
+
+        try:
+            membership = load_default_timeline()
+        except ImportError:
+            console.print(
+                "[red]ERROR:[/red] no point-in-time membership data -- run "
+                "`vibe-trade refresh-sp500-membership` first."
+            )
+            raise typer.Exit(code=1) from None
+        universe = sorted(members_ever_in_range(membership, start, end))
         console.print(
-            "[red]ERROR:[/red] sp100_top.py is empty -- run `vibe-trade refresh-sp100` first."
+            f"  using {len(universe)} symbols ever an S&P 500 member {start} -> {end} "
+            f"(point-in-time, survivorship-bias-free; --top-n ignored)"
         )
+    elif universe_mode == "top100":
+        from vibe_trade.data.sp100_top import LAST_UPDATED, SP100_TOP_BY_MCAP
+
+        if not SP100_TOP_BY_MCAP:
+            console.print(
+                "[red]ERROR:[/red] sp100_top.py is empty -- run `vibe-trade refresh-sp100` first."
+            )
+            raise typer.Exit(code=1)
+        universe = SP100_TOP_BY_MCAP[:top_n]
+        console.print(
+            f"  using {len(universe)} symbols from sp100_top.py (LAST_UPDATED={LAST_UPDATED})"
+        )
+    else:
+        console.print(f"[red]ERROR:[/red] unknown --universe '{universe_mode}' (want top100 or sp500)")
         raise typer.Exit(code=1)
-    universe = SP100_TOP_BY_MCAP[:top_n]
-    console.print(
-        f"  using {len(universe)} symbols from sp100_top.py (LAST_UPDATED={LAST_UPDATED})"
-    )
 
     # ---------------------------------------------------------- bars
     console.print("Ensuring historical bars are cached...")
@@ -739,6 +841,8 @@ def _run_backtest_cli(
         starting_equity=equity,
         pct_per_position=pct,
         max_positions=max_positions,
+        membership=membership,
+        frictions=frictions,
     )
     metrics = compute_metrics(result)
 
@@ -781,6 +885,8 @@ def _run_backtest_cli(
             "start": start.isoformat(),
             "end": end.isoformat(),
             "strategy": strategy.name,
+            "universe_mode": universe_mode,
+            "friction_mode": friction_mode,
             "top_n": top_n,
             "pct_per_position": pct,
             "max_positions": max_positions,
@@ -792,6 +898,7 @@ def _run_backtest_cli(
             "open_positions_at_end": result.open_positions_at_end,
             "skipped_buys_no_cash": result.skipped_buys_no_cash,
             "skipped_buys_no_data": result.skipped_buys_no_data,
+            "total_commission": result.total_commission,
         },
         "metrics": _metrics_to_jsonable(asdict(metrics)),
         "benchmarks": {
@@ -1328,6 +1435,7 @@ async def _run_preflight_cli(config, *, quiet: bool = False) -> None:
             universe=universe,
             strategies=strategies,
             max_positions=config.risk.max_open_positions,
+            mode=config.general.mode,
         )
     finally:
         await broker.disconnect()
@@ -1459,7 +1567,13 @@ def panic(
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
     confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
-    """PANIC: Close all positions immediately."""
+    """PANIC: Close all positions immediately.
+
+    Cancels every working order, then market-closes every held position.
+    Uses its own client id (never submit's) so it can still connect if
+    another job's client id is stuck -- precisely the scenario an operator
+    reaches for this in.
+    """
     if not confirm:
         typer.confirm(
             "This will close ALL positions immediately. Are you sure?",
@@ -1468,29 +1582,48 @@ def panic(
 
     config = load_config(config_path)
     _setup_logging(config.general.log_level, config.general.log_file)
+    console.print("[bold red]PANIC MODE — Closing all positions[/bold red]")
+    _run_with_crash_alert("panic", config, _run_panic_cli)
 
+
+async def _run_panic_cli(config) -> None:
+    from vibe_trade.broker.ib_broker import IBBroker
+    from vibe_trade.risk.panic import PANIC_CLIENT_ID, panic_close_all
+
+    broker_config = config.broker.model_copy()
+    broker_config.client_id = PANIC_CLIENT_ID
+    broker = IBBroker(broker_config, mode=config.general.mode)
     notifier = _get_notifier(config)
 
-    async def _run_panic():
-        from vibe_trade.broker.ib_broker import IBBroker
-        from vibe_trade.risk.panic import panic_close_all
+    await broker.connect()
+    try:
+        result = await panic_close_all(broker)
+    finally:
+        await broker.disconnect()
 
-        broker = IBBroker(config.broker, mode=config.general.mode)
-        await broker.connect()
-        try:
-            results = await panic_close_all(broker)
-            for r in results:
-                status_color = "green" if r["status"] == "FILLED" else "red"
-                console.print(
-                    f"  [{status_color}]{r['status']}[/{status_color}] "
-                    f"{r['side']} {r['quantity']}x {r['symbol']}"
-                )
-            await notifier.notify_panic(
-                f"PANIC executed: {len(results)} positions closed"
-            )
-        finally:
-            await broker.disconnect()
+    console.print(f"[dim]Cancelled {result.cancelled_orders} open order(s)[/dim]")
+    for d in result.details:
+        status_color = "green" if d["ok"] else "red"
+        console.print(
+            f"  [{status_color}]{d['status']}[/{status_color}] "
+            f"{d['side']} {d['quantity']}x {d['symbol']}"
+        )
 
-    console.print("[bold red]PANIC MODE — Closing all positions[/bold red]")
-    asyncio.run(_run_panic())
-    console.print("[green]All positions closed[/green]")
+    attempted = result.closed + result.failed
+    msg = f"PANIC executed: {result.closed}/{attempted} position(s) closed"
+    if not result.all_succeeded:
+        msg += f" -- {result.failed} FAILED, check the account immediately"
+    await notifier.notify_panic(msg)
+
+    if result.all_succeeded:
+        console.print(f"[green]All {attempted} position(s) closed[/green]")
+    else:
+        console.print(
+            f"[bold red]{result.failed} of {attempted} position(s) FAILED to "
+            f"close -- check the account immediately[/bold red]"
+        )
+        # Raise (rather than a quiet non-zero typer.Exit) so this goes through
+        # the same path as any other job failure: _run_with_crash_alert fires
+        # a second, distinctly-worded [CRITICAL] alert and the process exits
+        # non-zero. A partial panic failure is not a case to under-alert on.
+        raise RuntimeError(msg)

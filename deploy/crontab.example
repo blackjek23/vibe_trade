@@ -20,11 +20,45 @@
 # anything record still misses (orphan BUY and orphan SELL recovery), so record
 # is a fast-path, not the only path.
 #
-# DST caveat: Israel leaves summer time in late October, the US in early
-# November. In that ~1-week gap the US open lands at 17:30 Israel time and even
-# 16:35 is too early — record will no-op those days and reconcile will pick the
-# fills up. Nothing breaks, but don't be surprised by it.
+# DST caveat (corrected 2026-08-26 — the previous note here had the arithmetic
+# backwards): Israel and the US flip DST on different dates. The US leaves DST
+# the first Sunday of November and enters it the second Sunday of March;
+# Israel leaves the last Sunday of October and enters the Friday before the
+# last Sunday of March. In both gaps the offset between them is 6 hours
+# instead of the usual 7, so the 09:30 ET US open lands at 15:30 Israel time —
+# EARLIER, not later — which is roughly 14 trading days in March plus 5 in
+# late October/early November each year (H-1, PROJECT_EVALUATION.md).
+#
+# During those windows submit (16:00) and preflight (15:50) both run AFTER
+# the open, not before. Two things now guard against this in code rather than
+# relying on getting cron's clock exactly right:
+#   - submit refuses to evaluate a symbol whose last daily bar is today's US
+#     date instead of a closed prior day (`_last_bar_is_closed`, H-1a) — so a
+#     live intraday quote never gets traded as though it were a closed bar.
+#   - record, at 16:35, may still be too early to see the open's fills in
+#     that case; reconcile's 23:30 orphan-fill back-fill covers it either way.
+# The cron *times* below are fixed Asia/Jerusalem clock times and do not
+# themselves shift with the mismatch (H-1b). This is now fixed a different
+# way: Ubuntu's default `cron` package ignores TZ/CRON_TZ for scheduling
+# purposes (only passes it to the spawned process -- confirmed against
+# `/usr/share/doc/cron/FEATURES`), so per-line timezones aren't possible here.
+# `deploy/systemd/` replaces these four job lines with systemd timers whose
+# `OnCalendar=` is anchored directly to America/New_York and tracks each DST
+# transition correctly with zero manual adjustment (verified with
+# `systemd-analyze calendar` across the actual Oct/Nov 2026 mismatch window).
+# See deploy/systemd/README.md to migrate; this crontab keeps working as a
+# fallback in the meantime and the code-level guards (H-1a, H-4) cover the
+# actual trading-safety risk either way.
 
+# Holiday caveat (H-4, PROJECT_EVALUATION.md): `1-5` is weekdays only, with no
+# US market-holiday awareness (~9 weekdays/year: New Year's, MLK Day, Presidents
+# Day, Good Friday, Memorial Day, Juneteenth, July 4th, Labor Day, Thanksgiving,
+# Christmas). Both preflight and submit now check the real NYSE calendar in
+# code (`data/market_calendar.py`) and skip cleanly on a non-trading day, so a
+# holiday firing here is a safe no-op rather than the old failure mode: BUY
+# day-orders left working overnight, which made the *next* session's
+# double-run guard abort the whole day, exits included.
+#
 # Preflight — 10 minutes before submit. Verifies IB Gateway is up and logged in,
 # the universe loads, and a strategy is enabled. Read-only. Telegrams on success
 # AND failure, so silence (rather than a red message) is what should worry you.
@@ -39,6 +73,17 @@
 # Weekly report — Saturday 09:00. Renders reports/<date>-weekly.png + Telegram.
 00 09 * * 6    cd /opt/vibe-trade/deploy && docker compose run --rm report-weekly >> ./logs/cron.log 2>&1
 
-# Daily DB backup — 23:45, after reconcile is done. Keeps 14 days.
-# (See deploy/README.md "Database Backup" for the restore procedure.)
-45 23 * * 1-5  mkdir -p /opt/vibe-trade/backups && docker run --rm -v deploy_vibe-data:/data -v /opt/vibe-trade/backups:/backup alpine sh -c 'cp /data/vibe_trade.db "/backup/vibe_trade-$(date +\%Y\%m\%d).db"' && find /opt/vibe-trade/backups -name 'vibe_trade-*.db' -mtime +14 -delete >> /opt/vibe-trade/deploy/logs/cron.log 2>&1
+# Daily DB backup — 23:45, after reconcile is done. Keeps 14 days. Runs all
+# 7 days/week, not just weekdays: the previous `1-5` schedule meant a
+# Saturday disk failure could lose Friday's entire trading day with no
+# backup to restore from (PROJECT_EVALUATION.md).
+#
+# Uses SQLite's online `.backup` (safe mid-write/WAL) + integrity_check +
+# a `.sha256` sidecar, not a plain `cp` -- a torn/mid-write copy would pass
+# `cp` silently and sit for up to 14 days until `integrity_check` (which
+# nothing ran) would have caught it. The `.sha256` sidecar is also what
+# docs/playbooks/data-recovery.md's restore procedure actually needs to run
+# `sha256sum -c` against; the old `cp`-based backup never wrote one.
+# See scripts/nightly_backup.py. Runs inside bare python:3.11-slim (sqlite3
+# is stdlib) -- no apk/apt install step, so no network dependency at 23:45.
+45 23 * * *    docker run --rm -v deploy_vibe-data:/data:ro -v /opt/vibe-trade/backups:/backup -v /opt/vibe-trade/scripts:/scripts:ro python:3.11-slim@sha256:be1575ed968de893bd54f4c56315ff7c4736ce522c1bca08fd521731aafc0d76 python /scripts/nightly_backup.py --db /data/vibe_trade.db --out /backup --keep-days 14 >> /opt/vibe-trade/deploy/logs/cron.log 2>&1
