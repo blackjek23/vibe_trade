@@ -1,6 +1,10 @@
 # vibe_trade Roadmap — post-V2
 
-**As of 2026-04-29.** V2 implementation (Sessions A–E) complete; commits `925af28..65dcbb9` on `main`. 164 tests passing. Bot can run end-to-end against IB paper via three cron-triggered commands: `vibe-trade submit / record / reconcile`.
+**As of 2026-04-29** (original; counts below are historical, not current — see
+`PROJECT_MASTER_STATE.md` for the live test count and status). V2 implementation
+(Sessions A–E) complete; commits `925af28..65dcbb9` on `main`. 164 tests passing.
+Bot can run end-to-end against IB paper via three cron-triggered commands:
+`vibe-trade submit / record / reconcile`.
 
 This document maps what comes next. Sessions are numbered F+ to continue the A–E sequence, grouped by phase. Order is a recommendation, not a hard sequence — re-prioritize based on findings.
 
@@ -104,12 +108,38 @@ This document maps what comes next. Sessions are numbered F+ to continue the A�
 
 ---
 
+## Audit-remediation session ✅ Done (2026-08-26, unplanned — inserted ahead of M)
+
+A five-agent full-codebase audit (`PROJECT_EVALUATION.md`)
+found 4 CRITICAL + 5 HIGH + 7 MEDIUM findings, none of which fit neatly into
+the phases above. All of it was fixed and verified the same day: the four
+CRITICALs (empty-position-read guard, DB migration mechanism, FIFO SELL
+matching, backtest universe survivorship bias), the HIGHs (bar-freshness
+guard, `requested_quantity` inversion, split entry/exit fill-quantity
+columns, holiday double-run guard, placement-status whitelist bug), the
+Telegram token rotation, and the cheap wins (OPS-1 dead-man's switch,
+hardened nightly backup, digest-pinned Dockerfile, `panic.py` tests, CI
+mypy/pip-audit). **This closed out most of what Phase 4 below already
+listed** — see the strikethroughs. See `PROJECT_MASTER_STATE.md` §2's "Done"
+table for the itemized fix list and `PROJECT_EVALUATION.md`
+for the original findings (kept as historical record, resolution banner at
+top).
+
+**The one open output of this session:** C-2, the backtest rebuild, is done
+but the *verdict* is a decision, not a fix — `donchian` at production
+settings badly trails SPY/QQQ. See `docs/playbooks/go-live-criteria.md` for
+the gate table and `PROJECT_MASTER_STATE.md` §7 for the numbers. Whether to
+proceed with the Sept 1 paper reset, change the strategy pool, or something
+else is still the user's open call.
+
+---
+
 ## Phase 4 — Resilience hardening (driven by Session H findings)
 
-- **Late-fill edge case:** order placed at 16:00, fills after 16:25 — record misses it. Solution: reconcile auto-creates DB rows for fills with no matching trade row.
-- **Reconnect logic** for transient IB API drops mid-run
-- **DB schema migration tool** (alembic or simple deltas) — current `init_db` only creates missing tables, not new columns
-- **Disaster recovery:** rebuild DB from IB history when local data is lost
+- ~~**Late-fill edge case:** order placed at 16:00, fills after 16:25 — record misses it.~~ **Done** (Session H Bug #5 + the audit session's SELL-side twin) — reconcile back-fills orphan BUY and SELL fills.
+- **Reconnect logic** for transient IB API drops mid-run — still open; the crash-alert wrapper notifies and exits rather than recovering in-process.
+- ~~**DB schema migration tool**~~ **Done** (audit session, C-3) — `db/migrations.py`, hand-rolled `schema_version` + idempotent `ALTER TABLE`, run by `init_db`.
+- **Disaster recovery:** rebuild DB from IB history when local data is lost — still open, see `docs/playbooks/data-recovery.md` for the current (partial) story.
 
 ---
 

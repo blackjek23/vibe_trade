@@ -156,8 +156,9 @@ If anything errors, see Troubleshooting at the bottom.
 
 | Time (Jerusalem) | Command | What you're checking |
 |---|---|---|
+| 15:50 | `docker compose run --rm preflight` | Gateway/config health check, Telegram either way, healthchecks.io ping fires |
 | 16:00 | `docker compose run --rm submit` | Orders placed against IB paper, Telegram message lists them |
-| 16:25 | `docker compose run --rm record` | Fills persisted, status = SUBMITTED, Telegram confirms count |
+| 16:35 | `docker compose run --rm record` | Fills persisted, status = SUBMITTED, Telegram confirms count. **Not 16:25** — the US open is 16:30 Jerusalem time; running before that sees zero fills. |
 | 23:30 | `docker compose run --rm reconcile` | Statuses finalized (FILLED/CANCELLED), portfolio_snapshot row written, daily P&L Telegram message |
 
 Between runs, peek at the DB:
@@ -174,24 +175,37 @@ Cross-check IB Gateway's order log against the `trades` table — same tickers, 
 
 ---
 
-## Phase 5 — Hand off to cron (Day 2 onward)
+## Phase 5 — Hand off to a scheduler (Day 2 onward)
 
-Once Day 1 looks correct:
+Once Day 1 looks correct, pick a scheduler. **Recommended: `deploy/systemd/`
+timers**, not raw cron — a fixed-Jerusalem-clock crontab drifts against the US
+market by up to an hour during the ~19 days a year Israel and the US are on
+different sides of a DST transition (see `deploy/systemd/README.md`).
+`OnCalendar=... America/New_York` tracks the market's own clock instead.
+
+```bash
+sudo cp deploy/systemd/vibe-trade-*.service deploy/systemd/vibe-trade-*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+for t in preflight submit record reconcile backup report-weekly; do
+  sudo systemctl enable --now "vibe-trade-${t}.timer"
+done
+systemctl list-timers 'vibe-trade-*'   # verify next-fire times
+```
+
+If your repo isn't at `/opt/vibe-trade` or jobs don't run as a `vibe` user,
+edit the `.service` files' `User=`/`WorkingDirectory=` first.
+
+**Fallback: `crontab.example`** (fixed Asia/Jerusalem times, simpler but has
+the DST-drift issue above; code-level guards — `_last_bar_is_closed` and the
+NYSE calendar check — cover the trading-safety risk either way):
 
 ```bash
 crontab crontab.example
-crontab -l                  # verify three lines (16:00, 16:25, 23:30 Mon–Fri)
+crontab -l                  # verify four lines + Saturday report (15:50/16:00/16:35/23:30, Sat 09:00)
+systemctl status cron       # Debian/Ubuntu, or `crond` on RHEL/Fedora
 ```
 
-If your repo isn't at `/opt/vibe-trade`, edit `crontab.example` first to fix the `cd` paths.
-
-**Verify cron service is running:**
-
-```bash
-systemctl status cron       # Debian/Ubuntu
-# or
-systemctl status crond      # RHEL/Fedora
-```
+Don't run both at once — pick one.
 
 ---
 
@@ -212,7 +226,7 @@ Each evening after 23:30, take 5 minutes and check:
 Things to log (informally — a notes file is fine):
 - **Partial fills** — any? On which tickers? (Liquid SP500 should rarely partial-fill.)
 - **Reconcile drift** — any rows in `trades` whose status doesn't match IB's view?
-- **Late fills** — any fills timestamped after 16:25 that record missed?
+- **Late fills** — any fills timestamped after 16:35 that record missed? (reconcile's 23:30 orphan-fill back-fill recovers these regardless)
 - **Gateway disconnects** — any "connection refused" / "API error" in the log?
 - **Log noise** — too verbose? Too quiet? Anything you wish was logged but isn't?
 

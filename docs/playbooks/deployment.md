@@ -58,14 +58,25 @@ plus the weekly report job (report-weekly).
 
 ## Scheduling
 
-Install the crontab to run jobs automatically on trading days:
+**Recommended: `deploy/systemd/` timers.** A crontab pinned to a fixed
+Asia/Jerusalem clock time drifts against the US market by up to an hour
+during the ~19 days a year Israel and the US are on opposite sides of a DST
+transition; `deploy/systemd/*.timer` uses `OnCalendar=... America/New_York`
+for the four market-tied jobs, which tracks each zone's own DST rules.
+Confirmed installed and running on the dev host. See
+[`deploy/systemd/README.md`](../../deploy/systemd/README.md) for install and
+rollback steps.
+
+**Fallback: crontab.** Simpler, has the DST-drift issue above (code-level
+guards — `_last_bar_is_closed` and the NYSE calendar check — cover the
+trading-safety risk either way). Don't run both schedulers at once.
 
 ```bash
 crontab crontab.example
 crontab -l  # verify
 ```
 
-The crontab runs three daily jobs Mon-Fri, plus a weekly report on Saturday:
+The crontab runs four daily jobs Mon-Fri, plus a weekly report on Saturday:
 | Time (Jerusalem) | Job | What it does |
 |---|---|---|
 | 16:00 Mon-Fri | submit | Place exit + entry orders on IB |

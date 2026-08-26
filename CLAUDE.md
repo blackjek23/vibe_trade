@@ -7,7 +7,8 @@
 - **Language:** Python 3.11+
 - **Broker:** `ib_async` (fork of ib_insync — use ib_async, not ib_insync)
 - **Historical data:** `yfinance` (daily bars, no auth, free). Not IB historical.
-- **Database:** SQLite via SQLAlchemy 2.0 ORM
+- **Market calendar:** `pandas_market_calendars` (NYSE sessions/holidays — used by preflight + submit, not a hand-maintained date list)
+- **Database:** SQLite via SQLAlchemy 2.0 ORM + a hand-rolled migration mechanism (`db/migrations.py` — `schema_version` + idempotent `ALTER TABLE`, deliberately not Alembic)
 - **Config:** pydantic v2 + pydantic-settings (TOML + env vars)
 - **CLI:** typer + rich
 - **Testing:** pytest + pytest-asyncio; runs via `.venv/Scripts/python -m pytest`
@@ -25,7 +26,7 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 | 23:30                 | `vibe-trade reconcile`    | Update statuses (FILLED/CANCELLED/PARTIALLY_FILLED) + portfolio snapshot. |
 
 **Deployment:** Docker containers via `docker compose run` + host crontab (prod) / Windows 11 manual CLI (dev). Timezone = `Asia/Jerusalem`.
-**All operational procedures live in `docs/playbooks/`** (index at `docs/playbooks/README.md`): daily operations, paper reset, data recovery, IB Gateway unattended setup, deployment, Linux bring-up.
+**All operational procedures live in `docs/playbooks/`** (index at `docs/playbooks/README.md`): daily operations, paper reset, data recovery, IB Gateway unattended setup, deployment, Linux bring-up, go-live criteria.
 
 **Key invariants:**
 - Strategies evaluate yesterday's closed daily bar (`df.iloc[-1]`). No intraday, no lookahead.
@@ -35,23 +36,29 @@ Three short-lived OS-scheduled jobs per trading day. Full details in `docs/ARCHI
 
 ## Current status
 
-V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image) + Session L (multi-strategy) + audit-hardening session. **422 tests passing.** See `PROJECT_MASTER_STATE.md` for the live status.
+V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image) + Session L (multi-strategy) + audit-hardening session + a full five-agent audit (`PROJECT_EVALUATION.md`) with its entire remediation backlog closed same-day. **545 tests passing, `ruff check` clean.** See `PROJECT_MASTER_STATE.md` for the live status.
 
-> **The bot is live** (since 2026-05-06). Two things are open: **10 trading days had
-> no run at all** because IB Gateway wasn't up (full-day outages — no orders placed,
-> so benign, but nothing alerted), and the **backtest verdict is withdrawn** —
-> donchian, the only strategy trading, has never been backtested at production
-> settings. Both are detailed at the top of `PROJECT_MASTER_STATE.md`.
+> **The bot is live** (since 2026-05-06). Both prior open items are now closed:
+> the 10-missed-run problem (IB Gateway outages, nothing alerted) is fixed —
+> `deploy/systemd/*.timer` (DST-correct `America/New_York` scheduling, installed
+> and verified) + OPS-1 (healthchecks.io dead-man's switch, live) — and the
+> backtest verdict is no longer withdrawn, it's **in and it's bad**: `donchian`
+> at production settings, point-in-time S&P 500 membership, realistic frictions
+> — CAGR +4.00%, Sharpe 0.38, max DD -24.75% (median case), badly trailing
+> SPY/QQQ buy-and-hold on every axis. That's a decision now, not a data gap —
+> see `PROJECT_MASTER_STATE.md` §7 and `docs/playbooks/go-live-criteria.md`.
 > Run `python scripts/audit_drift.py <db>` before trusting any DB-derived report.
 
 - **Sessions A–E** (DB schema, sizing/risk, submit, record + reconcile, V1 cleanup): all done.
-- **Session I** (backtest framework + first run + benchmarks): framework done, **verdict withdrawn 2026-07-30**. The "Sharpe 1.14" headline was the *ema* run with Sharpe misreported (real: 1.055) at `pct=0.04/25-cap`; production runs *donchian* at `0.018/50` and has never been backtested. Frictions are zero. See `PROJECT_MASTER_STATE.md`.
+- **Session I** (backtest framework) + **C-2** (2026-08-26 rebuild): done. Universe is now point-in-time S&P 500 membership (not today's snapshot), production runs are backtested at production settings (`0.018/50`, not the old `0.04/25`), and frictions (slippage + IB commission model) are wired in via `--friction {none,median,stress}`. See verdict above.
 - **Session F** (notifications + structured logging): done. All three V2 jobs send Telegram via the configured notifier (Console fallback when off). Logs are plain to stdout + JSON to `logs/vibe_trade.log` with daily rotation, 7-day retention. DB is the source of truth for analytics; logs are for short-term ops only.
-- **Session G** (Docker deployment): done. Single image (python:3.11-slim + uv), three compose services, `network_mode: host` for IB Gateway. Host crontab triggers jobs Mon–Fri. Includes smoke-test script and full deploy README.
-- **Strategies:** Multi-strategy registry (Session L). `strategy/registry.py` maps ids → strategies, built from the config `[[strategies]]` list (order = entry priority). Available: Donchian breakout (`"donchian"`, N=20), SMA crossover (`"sma"` 20/50), EMA crossover (`"ema"` 12/26), MACD crossover (`"macd"` 12/26/9) — the three crossovers use regime/state semantics (BUY fast>slow, SELL fast<slow). Submit: priority conflict resolution + strategy-scoped exits (`order_ref=<id>`); record reads `orderRef`→`strategy_name`. Strategies are stateless (`evaluate(symbol, candles)` — no entry-price/stop awareness), so stop/target/trailing/intraday strategies need new machinery.
+- **Session G** (Docker deployment): done. Single image (python:3.11-slim + uv), three compose services, `network_mode: host` for IB Gateway. `deploy/systemd/*.timer` is the recommended scheduler (DST-correct); `crontab.example` is a documented fallback. Includes smoke-test script and full deploy README.
+- **Strategies:** Multi-strategy registry exists (Session L) but production runs **donchian only** — `sma`/`ema`/`macd` are registered and available, `enabled=false` by default. `strategy/registry.py` maps ids → strategies, built from the config `[[strategies]]` list (order = entry priority). Submit: priority conflict resolution + strategy-scoped exits (`order_ref=<id>`); record reads `orderRef`→`strategy_name`. Strategies are stateless (`evaluate(symbol, candles)` — no entry-price/stop awareness), so stop/target/trailing/intraday strategies need new machinery.
 - **Sizing:** 1.8% of net_liquidation per BUY, 50-position cap, floor to whole shares (cents-based arithmetic to defeat float imprecision).
 - **Client IDs:** submit=1, record=2, reconcile=3, notifier=8 (when needed for IB reads). Constants in `jobs/submit.py` and `scratches/scratch_notify_submit.py`.
 - **Cross-process state:** record + reconcile drive from `ib.fills()` (intact across processes), with `permId` as the dedup key (`ib.trades().order` fields reset to 0 on reconnect).
+- **DB migrations:** `db/migrations.py` — `schema_version` singleton row + idempotent `ALTER TABLE`/`CREATE INDEX` steps run by `init_db`, deliberately hand-rolled instead of Alembic.
+- **Ops:** `[healthcheck]` config (OPS-1, opt-in) pings a healthchecks.io-compatible URL from `preflight` on every run — closes the "silent scheduler death" gap Telegram alerts can't cover.
 - **Single source of truth:** `PROJECT_MASTER_STATE.md` at the repo root. Read this first when picking up the project. `docs/ROADMAP.md` covers Sessions H → onward.
 
 ## Project layout
@@ -60,29 +67,30 @@ V2 implementation + Sessions I/F/G/H/J/K + Session K-plus (weekly report image) 
 src/vibe_trade/
 ├── broker/        # ib_async wrapper (IBBroker, base, models)
 ├── config.py      # pydantic config models + load_config
-├── data/          # yfinance provider, SP500 universe, sp100_top static list
-├── db/            # SQLAlchemy models, repositories, engine
+├── data/          # yfinance provider, SP500 universe, sp100_top static list, market_calendar (NYSE session check)
+├── db/            # SQLAlchemy models, repositories, engine, migrations (schema_version + idempotent ALTER TABLE)
 ├── jobs/          # V2 jobs: preflight.py, submit.py, record.py, reconcile.py, override.py
-├── backtest/      # data.py, engine.py, metrics.py, plot.py (Session I)
+├── backtest/      # data.py, engine.py, metrics.py, plot.py (Session I) + membership.py (C-2: point-in-time S&P 500)
 ├── reports/       # data.py, metrics.py, render.py (Session K) + plot.py (Session K-plus weekly PNG)
-├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic + report-weekly image)
+├── notify/        # Telegram + console notifiers (wired into submit/record/reconcile + panic + report-weekly image) + healthcheck.py (OPS-1)
 ├── risk/          # manager.py, position_sizer.py, panic.py
 ├── strategy/      # base.py, registry.py, examples/{donchian,sma_crossover,ema_crossover,macd_crossover}.py
 └── cli.py         # typer: preflight, submit, record, reconcile, report, report-weekly, backtest, refresh-sp100, status, trades, config-check, close-position, cancel-pending, review-trades, panic
 
 tests/
-├── TEST_REGISTRY.csv    # central list of all tests (update after every change)
+├── TEST_REGISTRY.csv    # central list of all tests (update after every change) — the list of
+│                        # test files below drifted stale before (audit finding); don't hand-enumerate
+│                        # them here again, just `ls tests/test_*.py` or read the registry
 ├── conftest.py
-└── test_broker.py, test_config.py, test_db.py, test_donchian.py, test_position_sizer.py,
-    test_reconcile.py, test_record.py, test_risk_manager.py, test_submit.py, test_universe.py,
-    test_backtest_data.py, test_backtest_engine.py, test_backtest_metrics.py
+└── 31 test_*.py files, 545 tests total, one row per test in TEST_REGISTRY.csv
 
 deploy/
 ├── Dockerfile                 # python:3.11-slim + uv, single image for all jobs
-├── docker-compose.yml         # submit, record, reconcile, report-weekly services (network_mode: host)
+├── docker-compose.yml         # preflight, submit, record, reconcile, report-weekly services (network_mode: host)
 ├── .env.example               # Telegram secrets template
-├── crontab.example            # Mon-Fri 15:50/16:00/16:35/23:30 + Sat 09:00 report-weekly, Asia/Jerusalem
-├── ibgateway/                 # systemd + IBC assets so Gateway starts itself (untested on-box)
+├── crontab.example            # Mon-Fri 15:50/16:00/16:35/23:30 + Sat 09:00 report-weekly, Asia/Jerusalem (fallback scheduler)
+├── systemd/                   # RECOMMENDED scheduler: OnCalendar=...America/New_York timers (DST-correct); confirmed running on the dev host
+├── ibgateway/                 # systemd + IBC assets so Gateway starts itself (still untested on a live box)
 ├── smoke-test.sh              # sequential run of all jobs
 └── README.md                  # full setup, scheduling, troubleshooting guide
 
@@ -94,10 +102,11 @@ docs/
 │   ├── data-recovery.md       # drift audit, NEEDS_REVIEW, backup restore
 │   ├── ib-gateway.md          # systemd + IBC unattended Gateway
 │   ├── deployment.md          # Docker, cron install, updating
-│   └── linux-bringup.md       # fresh prod host end to end
+│   ├── linux-bringup.md       # fresh prod host end to end
+│   └── go-live-criteria.md    # scale-to-live gates — the C-2 verdict lives here too
 ├── ARCHITECTURE_V2.md         # original V2 plan + post-implementation deltas
 ├── ROADMAP.md                 # Sessions H → onward
-├── SESSION_H_FINDINGS.md      # numbered bug/incident history
+├── SESSION_H_FINDINGS.md      # numbered bug/incident history (Session H week specifically)
 └── superpowers/               # per-session design specs + implementation plans
     ├── specs/
     └── plans/
@@ -152,11 +161,13 @@ scratches/               # live IB-paper shape-discovery + DB-write scripts (not
 .venv/Scripts/python -m vibe_trade reconcile    # 23:30 — finalize statuses + snapshot
 .venv/Scripts/python -m vibe_trade report-weekly # Sat 09:00 — weekly dashboard PNG + Telegram (needs .[plot])
 
-# Backtest
-.venv/Scripts/python -m vibe_trade backtest --start 2018-01-01 --end 2026-01-01
+# Backtest — production-equivalent run (point-in-time universe, real settings, frictions)
+.venv/Scripts/python -m vibe_trade backtest --start 2018-01-01 --end 2026-01-01 \
+    --universe sp500 --pct 0.018 --max-positions 50 --friction median
 
 # Maintenance
-.venv/Scripts/python -m vibe_trade refresh-sp100   # quarterly: refresh top-100 list
+.venv/Scripts/python -m vibe_trade refresh-sp100              # quarterly: refresh top-100 list
+.venv/Scripts/python -m vibe_trade refresh-sp500-membership    # refresh point-in-time S&P 500 membership (C-2)
 
 # Docker deployment (Linux prod — see docs/playbooks/deployment.md)
 cd deploy && docker compose build                  # build image

@@ -19,24 +19,35 @@ Four OS-scheduled jobs, each short-lived (no long-running process). Cron drives 
 | 23:30 | `vibe-trade reconcile`   | 3         | Finalizes statuses (FILLED/CANCELLED/PARTIAL) + portfolio snapshot + daily P&L. |
 | Sat 09:00 | `vibe-trade report-weekly` | 8     | Renders the last-7-day dashboard PNG and sends it to Telegram.     |
 
-**Pre-flight:** IB Gateway / TWS must be up on the configured port (paper 7497 / live 7496) before `submit`/`record`/`reconcile`. If it's down, the job sends a `[CRITICAL]` Telegram alert and exits non-zero (Bug #6).
+**Pre-flight:** IB Gateway / TWS must be up on the configured port (paper 7497 / live 7496) before `submit`/`record`/`reconcile`. If it's down, the job sends a `[CRITICAL]` Telegram alert and exits non-zero (Bug #6). `preflight` also pings a hosted dead-man's switch (OPS-1, `[healthcheck]` in config) on every run — READY or NOT READY — so a *total* outage (host down, scheduler itself broken) shows up as a missed check on the monitoring service instead of silence nobody notices.
+
+**Scheduler:** `deploy/systemd/*.timer` (`OnCalendar=... America/New_York` for the four market-tied jobs), not raw crontab — a plain Asia/Jerusalem crontab drifts against the US market clock by up to an hour during the ~19 DST-mismatch days each year. `deploy/crontab.example` still exists as a documented fallback/rollback. See `deploy/systemd/README.md`.
 
 ---
 
 ## 2. Strategy pool
 
-The bot runs **multiple strategies at once** (Session L). The active pool lives in
-`config/config.toml` under `[[strategies]]`. **List order = entry priority.**
+The bot **can** run multiple strategies at once (Session L's registry supports
+it), but production currently runs **`donchian` only** — `sma`/`ema`/`macd`
+are registered and available but `enabled = false` in both `config/config.toml`
+and `config.example.toml`. The active pool lives in `config/config.toml` under
+`[[strategies]]`. **List order = entry priority.**
 
-Current pool (priority order):
+| # | id         | type            | rule (regime/state on yesterday's daily close) | Live? |
+|---|------------|-----------------|------------------------------------------------|-------|
+| 1 | `donchian` | breakout        | BUY close > prior-20-day high; SELL < prior-20-day low | **Yes** — the only strategy trading |
+| — | `sma`      | trend crossover | BUY SMA(20) > SMA(50); SELL SMA(20) < SMA(50)  | No — available, disabled |
+| — | `ema`      | trend crossover | BUY EMA(12) > EMA(26); SELL EMA(12) < EMA(26)  | No — available, disabled |
+| — | `macd`     | momentum        | BUY MACD(12,26) > signal(9); SELL MACD < signal | No — available, disabled |
 
-| # | id         | type            | rule (regime/state on yesterday's daily close) |
-|---|------------|-----------------|------------------------------------------------|
-| 1 | `donchian` | breakout        | BUY close > prior-20-day high; SELL < prior-20-day low |
-| 2 | `ema`      | trend crossover | BUY EMA(12) > EMA(26); SELL EMA(12) < EMA(26)  |
-| 3 | `macd`     | momentum        | BUY MACD(12,26) > signal(9); SELL MACD < signal |
+> ⚠️ **Before enabling a second strategy, read `PROJECT_MASTER_STATE.md` §7.**
+> The C-2 backtest (2026-08-26) showed `donchian` — the only strategy with a
+> production-settings, point-in-time, frictioned backtest — badly trailing
+> SPY/QQQ. `sma`/`ema`/`macd` have never been backtested that rigorously;
+> don't take their old frictionless/wrong-universe numbers at face value
+> either.
 
-Two rules govern how they coexist:
+Two rules govern how they'd coexist if more than one were enabled:
 
 - **Entry conflict → priority wins.** If more than one strategy signals BUY on the
   same un-held ticker, the highest-priority (first listed) strategy claims it. One

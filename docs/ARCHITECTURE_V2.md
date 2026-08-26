@@ -21,6 +21,7 @@
 | `total_pnl` column on `daily_pnl` | **Removed.** Compute `realized + unrealized` on read. | Redundant. Session A. |
 | Single shared client_id | **Three hardcoded:** submit=1, record=2, reconcile=3 (constants in `jobs/submit.py`). | Audit trail via `fill.execution.clientId`. IB scopes today's trades/fills by account, not client_id, so cross-client visibility is fine. |
 | Position sizing tied to risk-per-share (entry − stop) | **Fixed % of net_liquidation:** 1.8% × 50-position cap. Floor to whole shares via integer cents arithmetic. | No trailing stops = no risk-per-share input. Locked decision in Session B. |
+| Three jobs, cron-driven | **Four jobs** — a `preflight` step (15:50) was added later: read-only Gateway/config health check, Telegrams either way, plus (as of the 2026-08-26 audit-fix session) a dead-man's-switch ping to healthchecks.io. Scheduling moved from raw crontab to `deploy/systemd/*.timer` with `OnCalendar=... America/New_York` for the market-tied jobs — a plain Asia/Jerusalem crontab drifts against the US market by up to an hour during DST-mismatch windows (Israel/US flip DST on different dates); systemd's `OnCalendar=` computes each zone's DST correctly. | Ten missed trading days (IB Gateway down, nothing alerted) plus the DST-drift finding (H-1/H-1b) in the 2026-08-26 audit. |
 
 The original plan below describes the architecture as designed. The deltas above
 describe what was actually built. Both are useful — the plan reads as intent,
@@ -122,7 +123,7 @@ Mon 00:00 ─────────────── DB idle ─────�
 Mon 16:00  Bot 1 runs
            IB ⇢ orders queued
            DB unchanged
-Mon 16:25  Bot 2 runs
+Mon 16:35  Bot 2 runs
            IB → ask "today's orders"
            DB ← insert SUBMITTED rows
 Mon 16:30  Market opens — IB fills orders over the day
@@ -321,7 +322,7 @@ Each session ends with a commit + all tests green + a clear exit criterion.
 
 **Exit criterion:** full end-to-end cycle runs against paper account:
 1. 16:00: run submit → orders in IB
-2. 16:25: run record → DB has SUBMITTED rows
+2. 16:35: run record → DB has SUBMITTED rows
 3. 23:30: run reconcile → DB has FILLED/CANCELLED + snapshot
 
 - `jobs/record.py`, `jobs/reconcile.py`

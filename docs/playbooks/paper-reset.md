@@ -11,21 +11,30 @@ of accumulated drift in the way.
 ## Read this first
 
 > **The plan of record is [go-live-criteria.md](go-live-criteria.md)**: reset
-> 2026-09-01, run to year end, decide in January. Read it before resetting — it sets
-> the August prerequisites, and one of them can cancel the reset.
+> 2026-09-01, run to year end, decide in January. Read it before resetting — its
+> August prerequisite (a real donchian backtest) is now done, and it **failed**
+> the gate. The reset itself is still unmodified plan-of-record pending the
+> user's decision — see the banner at the top of go-live-criteria.md.
 
 **A clean paper run proves the plumbing, not the edge.** It will tell you that
 submit places orders, record captures fills, reconcile closes rows, and the audit
-comes back clean. It will *not* tell you the strategy makes money — that is what a
-backtest is for, and the backtest verdict is currently **withdrawn**:
+comes back clean. It will *not* tell you the strategy makes money — that question
+now has an answer, and it is not a good one:
 
-- production runs `donchian`, which has **never been backtested**
-- the four saved runs used `pct=0.04 / 25-cap`; production is `0.018 / 50`
-- the engine models **zero** commission and slippage
+- `donchian` (the only strategy trading) **has been backtested** at production
+  settings (`0.018/50`) with point-in-time S&P 500 membership and realistic
+  frictions — median case: **CAGR +4.00%, Sharpe 0.38, max DD -24.75%**,
+  trailing both SPY and QQQ buy-and-hold on every axis (return, Sharpe, *and*
+  drawdown). See `PROJECT_MASTER_STATE.md` §7 for the full numbers.
+- The old "Sharpe 1.14" headline this section used to caveat was a different
+  strategy (`ema`) at different, non-production settings, and has been
+  withdrawn since 2026-07-30.
 
-So: reset and run, by all means. But treat "the pipeline is clean for two weeks" as
-a *plumbing* result. Going to `mode = "live"` is a separate decision that should
-wait on a donchian backtest at production settings with frictions.
+So: resetting and running still proves the plumbing, and that has value on its
+own. But going to `mode = "live"` — or even continuing the Sept 1 reset as
+currently planned — is now a decision to make **with** this result in hand,
+not one to defer past it. That decision is open; see
+[go-live-criteria.md](go-live-criteria.md).
 
 **What this procedure does and does not touch:**
 

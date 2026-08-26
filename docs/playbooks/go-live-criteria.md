@@ -1,7 +1,21 @@
 # Go-live criteria
 
-**Plan of record (set 2026-07-30).** Reset the paper account **2026-09-01**, run
-clean through year end, decide on `mode = "live"` in **January 2027**.
+> 🔴 **The August gate (item 2 below) is done, and it came back negative.**
+> `donchian` at production settings (`0.018/50`, full point-in-time S&P 500,
+> 2018–2026), median friction: **CAGR +4.00%, Sharpe 0.38, max DD -24.75%** —
+> badly trailing SPY (+14.12% CAGR, Sharpe 0.78) and QQQ (+19.25%, Sharpe 0.85)
+> buy-and-hold on every axis. This is the exact scenario the plan below calls
+> out: *"If step 2 fails — donchian is not profitable net of friction —
+> stop. Do not reset and run four months of a strategy the backtest
+> rejects."* Full verdict in `PROJECT_MASTER_STATE.md` §7 and
+> `backtests/c2_donchian_prod_median/`. **The user has not yet decided**
+> whether to cancel/delay the Sept 1 reset, run a different strategy, or
+> proceed anyway — this page's plan of record below is unchanged until they
+> do. Don't act on it unilaterally; flag it and ask.
+
+**Plan of record (set 2026-07-30, not yet revised for the result above).**
+Reset the paper account **2026-09-01**, run clean through year end, decide on
+`mode = "live"` in **January 2027**.
 
 Sept 1 → Dec 31 is **four** months, not three — roughly 85 trading days.
 
@@ -96,16 +110,16 @@ rather than *discovery* of an unvalidated one.
 
 | # | Task | Gate |
 |---|---|---|
-| 1 | **Rotate the Telegram token** | Exposed since 2026-05-08, still live |
-| 2 | **Backtest `donchian` at `0.018 / 50`** with 53 bps and 82 bps friction | The decision instrument. Runs offline — the bar cache covers 2018 → 2025-12-31 |
-| 3 | Same for `ema`; re-check `macd` | Decide the September strategy pool on evidence |
-| 4 | Add friction params to `backtest/engine.py` | Currently hardcoded zero |
-| 5 | Deploy `deploy/ibgateway/` + verify `preflight` | Removes the cause of the 10 missed days |
-| 6 | Purge the 7 dead tickers from `SP500_SYMBOLS` | FISV, MRO, LUMN, DXC, ILMN, NWL, ENPH |
+| 1 | ~~**Rotate the Telegram token**~~ | **DONE 2026-08-26** — new bot (`Vibe_trade_claude_bot`), new token wired into `deploy/.env`, verified end-to-end (`getMe` + a real `sendMessage` delivered). Old bot/token should be revoked in BotFather if not already. |
+| 2 | ~~**Backtest `donchian` at `0.018 / 50`** with median/stress friction~~ | **DONE 2026-08-26** — point-in-time S&P 500 membership (not today's snapshot), full 2018-2026 range. Result: **fails this gate.** See the banner at the top of this page. |
+| 3 | Same for `ema`; re-check `macd` | **Still open** — only `donchian` (the strategy actually trading) was rebuilt for C-2. `ema`/`macd` still have no production-settings, point-in-time, frictioned backtest. Moot unless the strategy pool changes. |
+| 4 | ~~Add friction params to `backtest/engine.py`~~ | **DONE** — `Frictions` dataclass (slippage bps + IB commission model), `--friction {none,median,stress}` on `vibe-trade backtest`. |
+| 5 | ~~Deploy `deploy/ibgateway/` + verify `preflight`~~ | **Partially done, differently than planned.** `deploy/ibgateway/` (Gateway keepalive via systemd+IBC) is still unexecuted — see its own README. What *is* done and live-verified: `deploy/systemd/*.timer` (job scheduling, `OnCalendar=... America/New_York` — fixes the DST drift that caused the 10 missed days, confirmed with `systemd-analyze calendar` and now installed+enabled on `jeki-MINIPC`) and OPS-1 (`preflight` pings healthchecks.io on every run, verified live). Together these close the *detection and scheduling* side of the 10-missed-days problem; Gateway still needing a human restart is the one piece left. |
+| 6 | ~~Purge the 7 dead tickers from `SP500_SYMBOLS`~~ | **DONE** (commit `c6c8628`) — FISV, MRO, LUMN, DXC, ILMN, NWL, ENPH removed. |
 
-**If step 2 fails — donchian is not profitable net of friction — stop.** Do not
-reset and run four months of a strategy the backtest rejects. Fix the strategy
-first; the calendar is not the constraint.
+**Per this page's own rule, step 2 failing means: stop.** Do not reset and run
+four months of a strategy the backtest rejects. That decision has not been
+made yet — see the banner at the top of this page.
 
 ---
 
@@ -127,13 +141,16 @@ straight on paper, it will not do better with real money.
 
 ### B. Strategy — from the backtest, not the paper run
 
-| Gate | Threshold |
-|---|---|
-| Donchian backtested at production settings with measured friction | Done, artifact on disk |
-| Sharpe net of friction | **> 0.8** (SPY was 0.78 over the same window) |
-| Max drawdown | **< 25%** |
-| Net per-trade edge at the *stress* friction (82 bps) | **> 0** with margin |
-| Positive across sub-periods | Not carried by one year |
+| Gate | Threshold | Result (2026-08-26) |
+|---|---|---|
+| Donchian backtested at production settings with measured friction | Done, artifact on disk | ✅ Done |
+| Sharpe net of friction | **> 0.8** (SPY was 0.78 over the same window) | ❌ **0.38** (median), 0.29 (stress) |
+| Max drawdown | **< 25%** | ❌ **-24.75%** (median), -25.41% (stress) — borderline-fails on its own, and does so while trailing both benchmarks |
+| Net per-trade edge at the *stress* friction (82 bps) | **> 0** with margin | ⚠️ Positive but thin — CAGR +2.80% at stress, no real margin |
+| Positive across sub-periods | Not carried by one year | Not separately checked — the aggregate result already fails without needing this |
+
+**Gate B fails on every row that has a result.** This is what the banner at
+the top of this page is flagging.
 
 ### C. Paper-run sanity — weak evidence, use as a veto only
 

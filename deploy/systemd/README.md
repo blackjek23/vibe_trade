@@ -43,9 +43,17 @@ both the matched and mismatched cases.
 
 All `.service`/`.timer` pairs passed `systemd-analyze verify` (static syntax
 check) and every `OnCalendar=` line was checked with `systemd-analyze
-calendar` for plausible, correctly-shifting next-run times. **None of this
-has been installed or actually fired on a live host** — verify the paths
-below match your deployment before trusting it unattended, same caveat as
+calendar` for plausible, correctly-shifting next-run times.
+
+**Confirmed installed and running** on `jeki-MINIPC` (2026-08-26) — the
+dev/bring-up host this repo runs on day to day, **not** the `/opt/vibe-trade`
++ `vibe` user prod host these checked-in unit files assume. That host got
+its own generated units (`User=jeki`,
+`WorkingDirectory=/home/jeki/Projects/vibe_trade/deploy`) rather than these
+files directly. `systemctl list-timers 'vibe-trade-*'` there shows all six
+timers enabled with correct next-fire times. **The checked-in files below are
+still unverified against the eventual real prod box** — re-verify paths and
+user there before trusting it unattended, same caveat as
 `deploy/ibgateway/README.md`.
 
 ## Install
