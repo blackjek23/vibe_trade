@@ -108,6 +108,29 @@ class TelegramConfig(BaseModel):
     daily_summary: bool = True
 
 
+class HealthcheckConfig(BaseModel):
+    """OPS-1 (PROJECT_EVALUATION.md): a dead-man's switch, distinct from
+    Telegram's failure alerts. preflight pings `ping_url` once it reaches a
+    real result -- READY or NOT READY -- so a total outage (host down,
+    cron/systemd itself broken, network gone entirely) shows up as silence
+    on an external monitor instead of nothing happening at all. Telegram
+    alerts require this process to run and reach Telegram to fire; this
+    catches the process never running, or never getting this far, in the
+    first place, because the monitoring service raises its own alarm when
+    an expected ping goes missing.
+
+    Get `ping_url` from https://healthchecks.io (or a compatible
+    self-hosted instance): create a check, set its period to match how
+    often preflight runs plus a grace window, paste the ping URL here (or
+    set the VIBE_TRADE_HEALTHCHECK_PING_URL env var -- resolved in cli.py's
+    preflight runner the same way notify/telegram.py resolves its token).
+    """
+
+    enabled: bool = False
+    ping_url: str = ""
+    timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
+
 class GeneralConfig(BaseModel):
     mode: Literal["paper", "live"] = "paper"
     log_level: str = "INFO"
@@ -138,6 +161,7 @@ class AppConfig(BaseSettings):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    healthcheck: HealthcheckConfig = Field(default_factory=HealthcheckConfig)
     # Multi-strategy registry (Session L). Default preserves single-Donchian
     # behavior when the [[strategies]] section is absent. Order = priority.
     strategies: list[StrategyConfig] = Field(

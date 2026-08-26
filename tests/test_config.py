@@ -9,6 +9,7 @@ from vibe_trade.config import (
     AppConfig,
     BrokerConfig,
     GeneralConfig,
+    HealthcheckConfig,
     RiskConfig,
     SchedulerConfig,
     StrategyConfig,
@@ -168,12 +169,35 @@ class TestRiskConfig:
         assert not hasattr(c, "trailing_stop")
 
 
+class TestHealthcheckConfig:
+    """OPS-1 dead-man's switch config -- opt-in, disabled by default."""
+
+    def test_defaults_disabled(self):
+        c = HealthcheckConfig()
+        assert c.enabled is False
+        assert c.ping_url == ""
+        assert c.timeout_seconds == 10.0
+
+    def test_timeout_must_be_positive(self):
+        with pytest.raises(ValidationError):
+            HealthcheckConfig(timeout_seconds=0)
+
+    def test_timeout_capped_at_60(self):
+        with pytest.raises(ValidationError):
+            HealthcheckConfig(timeout_seconds=61)
+
+
 class TestAppConfig:
     def test_defaults(self):
         c = AppConfig()
         assert c.general.mode == "paper"
         assert c.broker.paper_port == 7497
         assert c.risk.max_open_positions == 50
+
+    def test_healthcheck_defaults_disabled(self):
+        c = AppConfig()
+        assert c.healthcheck.enabled is False
+        assert c.healthcheck.ping_url == ""
 
     def test_load_config_no_file(self):
         """Should return defaults when no config file exists."""

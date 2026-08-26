@@ -369,6 +369,15 @@ test_config.py,TestStrategiesConfig,test_strategy_config_defaults,StrategyConfig
 test_config.py,TestStrategiesConfig,test_pct_override_validation,Reject pct override of 0 or >1
 test_config.py,TestStrategiesConfig,test_parses_toml_strategies_block,Parse [[strategies]] block with params and pct override
 test_config.py,TestStrategiesConfig,test_absent_section_defaults_to_donchian,Absent section defaults to donchian
+test_config.py,TestHealthcheckConfig,test_defaults_disabled,OPS-1: HealthcheckConfig defaults to disabled with a blank ping_url
+test_config.py,TestHealthcheckConfig,test_timeout_must_be_positive,timeout_seconds=0 rejected by validation
+test_config.py,TestHealthcheckConfig,test_timeout_capped_at_60,timeout_seconds=61 rejected by validation
+test_config.py,TestAppConfig,test_healthcheck_defaults_disabled,AppConfig.healthcheck defaults to disabled
+test_healthcheck.py,TestPingHealthcheck,test_blank_url_returns_false_without_a_request,A blank ping_url short-circuits to False without calling urlopen
+test_healthcheck.py,TestPingHealthcheck,test_2xx_response_returns_true,A 2xx response from the monitoring service returns True
+test_healthcheck.py,TestPingHealthcheck,test_non_2xx_response_returns_false,A non-2xx response returns False
+test_healthcheck.py,TestPingHealthcheck,test_network_error_returns_false_not_raises,A URLError is caught and returns False rather than propagating
+test_healthcheck.py,TestPingHealthcheck,test_timeout_is_forwarded,The configured timeout is passed through to urlopen
 test_submit.py,TestMultiStrategyEntries,test_priority_first_buy_wins,Highest-priority strategy claims a contested BUY with its order_ref
 test_submit.py,TestMultiStrategyEntries,test_lower_priority_wins_when_higher_holds,Lower-priority strategy buys when higher one HOLDs
 test_submit.py,TestMultiStrategyEntries,test_buy_order_ref_set_for_real_donchian,Real Donchian BUY carries order_ref=donchian

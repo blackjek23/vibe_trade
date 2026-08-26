@@ -80,3 +80,14 @@ chat_id = ""                      # or set VIBE_TRADE_TELEGRAM_CHAT_ID env var
 notify_on_trade = true
 notify_on_error = true
 daily_summary = true
+
+[healthcheck]
+# OPS-1 (PROJECT_EVALUATION.md): dead-man's switch, distinct from Telegram
+# above. preflight pings ping_url every run (READY or NOT READY) so a total
+# outage -- host down, cron/systemd itself broken, network gone entirely --
+# shows up as silence on an external monitor instead of nothing at all.
+# Get a ping URL from https://healthchecks.io: create a check, set its
+# period to match how often preflight runs (daily) plus a grace window.
+enabled = false
+ping_url = ""                     # or set VIBE_TRADE_HEALTHCHECK_PING_URL env var
+timeout_seconds = 10.0

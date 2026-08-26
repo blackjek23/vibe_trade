@@ -1440,6 +1440,21 @@ async def _run_preflight_cli(config, *, quiet: bool = False) -> None:
     finally:
         await broker.disconnect()
 
+    # OPS-1: dead-man's switch. Fires once we have a real result -- READY or
+    # NOT READY, doesn't matter -- because reaching this line already proves
+    # the job ran, the host is up, and IB was reachable. A total outage never
+    # gets here at all, which is exactly what the external monitor is meant
+    # to catch (see HealthcheckConfig's docstring).
+    if config.healthcheck.enabled:
+        import os
+
+        from vibe_trade.notify.healthcheck import ping_healthcheck
+
+        ping_url = config.healthcheck.ping_url or os.environ.get(
+            "VIBE_TRADE_HEALTHCHECK_PING_URL", ""
+        )
+        ping_healthcheck(ping_url, timeout=config.healthcheck.timeout_seconds)
+
     table = Table(title="Preflight")
     table.add_column("Check", style="cyan")
     table.add_column("")
