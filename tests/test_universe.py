@@ -60,6 +60,9 @@ class TestSymbolNormalization:
         delisted = {
             "ATVI", "FRC", "SIVB", "FBHS", "CDAY", "CTLT", "DFS", "PARA",
             "PEAK", "WRK", "PXD", "FLT", "PKI", "RE", "DISH", "ANSS",
+            # PROJECT_EVALUATION.md go-live-criteria.md step 6: acquired/
+            # renamed/removed from the index, purged 2026-08-26.
+            "FISV", "MRO", "LUMN", "DXC", "ILMN", "NWL", "ENPH",
         }
         still_present = delisted & set(SP500_SYMBOLS)
         assert still_present == set(), f"delisted tickers still listed: {still_present}"

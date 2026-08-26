@@ -87,7 +87,7 @@ test_universe.py,TestSymbolNormalization,test_normalize_converts_dot_to_hyphen,H
 test_universe.py,TestSymbolNormalization,test_normalize_uppercases_and_strips,Hygiene #1: normalize_symbol uppercases and strips whitespace
 test_universe.py,TestSymbolNormalization,test_normalize_leaves_plain_symbol_untouched,Hygiene #1: plain ticker like AAPL passes through normalize_symbol unchanged
 test_universe.py,TestSymbolNormalization,test_sp500_list_uses_yfinance_hyphen_form,Hygiene #1: SP500_SYMBOLS contains no dotted tickers (would fail yfinance)
-test_universe.py,TestSymbolNormalization,test_sp500_list_excludes_confirmed_delistings,Hygiene #1: 16 confirmed-delisted tickers removed from SP500_SYMBOLS
+test_universe.py,TestSymbolNormalization,test_sp500_list_excludes_confirmed_delistings,Hygiene #1: 23 confirmed-delisted tickers removed from SP500_SYMBOLS
 test_universe.py,TestSymbolNormalization,test_load_universe_normalizes_dotted_custom_symbol,Hygiene #1: load_universe normalizes a dotted custom symbol to hyphen form
 test_position_sizer.py,TestHappyPath,test_typical_sizing_at_default_pct,V2: $100K * 1.8% / $50 = 36 shares (cents-based to defeat float imprecision)
 test_position_sizer.py,TestHappyPath,test_floors_to_whole_share,V2: $1800/$77 = 23.37 floors to 23 (no fractional shares)
