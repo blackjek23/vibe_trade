@@ -421,3 +421,28 @@ test_preflight.py,TestConfigProblems,test_empty_universe_fails,Empty universe fa
 test_preflight.py,TestConfigProblems,test_no_strategies_fails,No enabled strategies fails preflight
 test_preflight.py,TestPositionCap,test_over_cap_is_flagged,Over-cap holdings are flagged with the force-trim count
 test_preflight.py,TestPositionCap,test_at_cap_exactly_is_ok,Exactly at the cap passes
+test_membership.py,TestParseCurrentMembers,test_parses_symbols_in_order,Parses the constituents table's Symbol column into a normalized ticker list
+test_membership.py,TestParseCurrentMembers,test_normalizes_dotted_tickers,BRK.B normalizes to BRK-B via normalize_symbol
+test_membership.py,TestParseCurrentMembers,test_missing_table_raises,Raises ValueError naming the missing id when no constituents table is present
+test_membership.py,TestParseChanges,test_same_row_swap,A single changes-table row carrying both an added and removed ticker parses as one event with both set
+test_membership.py,TestParseChanges,test_add_only_row,A changes-table row with a blank Removed side parses with removed=None
+test_membership.py,TestParseChanges,test_remove_only_row,A changes-table row with a blank Added side parses with added=None
+test_membership.py,TestParseChanges,test_parses_all_rows,All data rows after the 2-row header are parsed, none dropped or duplicated
+test_membership.py,TestParseChanges,test_missing_table_raises,Raises ValueError naming the missing id when no changes table is present
+test_membership.py,TestParseAddedDates,test_parses_date_added_column,Parses the constituents table's Date added column into {symbol: date}
+test_membership.py,TestParseAddedDates,test_missing_table_raises,Raises ValueError naming the missing id when no constituents table is present
+test_membership.py,TestRecentAdditionsSince,test_only_symbols_added_after_cutoff,Only symbols whose Date added is strictly after the cutoff are synthesized as add-events
+test_membership.py,TestRecentAdditionsSince,test_empty_when_nothing_after_cutoff,Returns an empty list when no symbol's Date added is after the cutoff
+test_membership.py,TestPointInTimeMembers,test_as_of_today_returns_current_members_unchanged,as_of >= every change date returns current_members unchanged
+test_membership.py,TestPointInTimeMembers,test_as_of_exactly_a_change_date_is_already_effective,A change dated exactly as_of is treated as already applied, not undone
+test_membership.py,TestPointInTimeMembers,test_undoes_same_row_swap,Before a same-row swap's date, the added ticker is absent and the removed ticker is present
+test_membership.py,TestPointInTimeMembers,test_undoes_remove_only_event,Before a remove-only event's date, the removed ticker is still a member
+test_membership.py,TestPointInTimeMembers,test_undoes_add_only_event,Before an add-only event's date, the added ticker is not yet a member
+test_membership.py,TestPointInTimeMembers,test_walks_multiple_changes_backward,Walking backward past several change dates undoes each one correctly in combination
+test_membership.py,TestPointInTimeMembers,test_before_earliest_recorded_change,as_of before the earliest recorded change documents the limitation rather than crashing
+test_membership.py,TestMembershipTimeline,test_matches_point_in_time_members_at_every_breakpoint,The bisect-based fast path matches point_in_time_members exactly at every change breakpoint
+test_membership.py,TestMembershipTimeline,test_matches_point_in_time_members_mid_interval,The bisect-based fast path matches point_in_time_members exactly at mid-interval dates
+test_membership.py,TestMembershipTimeline,test_before_earliest_breakpoint,timeline.at() before the earliest breakpoint matches point_in_time_members at date.min
+test_membership.py,TestGenerateArtifactSource,test_output_is_valid_python,Generated module source compiles without a SyntaxError
+test_membership.py,TestGenerateArtifactSource,test_round_trips_members_and_changes,Compiling and exec'ing the generated source reproduces the same members and changes passed in
+test_membership.py,TestGenerateArtifactSource,test_changes_sorted_descending_by_date,The generated CHANGES list is sorted descending by effective date

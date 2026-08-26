@@ -589,6 +589,67 @@ def refresh_sp100() -> None:
     console.print("\n[dim]Commit src/vibe_trade/data/sp100_top.py to lock in the new list.[/dim]")
 
 
+@app.command(name="refresh-sp500-membership")
+def refresh_sp500_membership() -> None:
+    """Refresh point-in-time S&P 500 index membership (C-2, PROJECT_EVALUATION.md).
+
+    Scrapes Wikipedia's "List of S&P 500 companies" page for the current
+    constituent list and (from a pinned older revision -- the live page no
+    longer carries it) the dated additions/removals history, then rewrites
+    src/vibe_trade/data/sp500_membership.py. Fixes the backtest's previous
+    survivorship bias: `sp100_top.py` applied *today's* top-100 unchanged
+    across the whole 2018-2026 window; this lets the backtest ask "who was
+    actually in the index on date X" instead. Commit the resulting file.
+    """
+    from datetime import date as _date
+
+    from vibe_trade.backtest.membership import (
+        CHANGES_TABLE_FALLBACK_REVID,
+        _fetch_wikipedia_html,
+        _fetch_wikipedia_revision_html,
+        generate_artifact_source,
+        parse_added_dates,
+        parse_changes,
+        parse_current_members,
+    )
+
+    console.print("[bold]Refreshing point-in-time S&P 500 membership[/bold]")
+    console.print("Fetching live page...")
+    live_html = _fetch_wikipedia_html()
+    current_members = parse_current_members(live_html)
+    added_dates = parse_added_dates(live_html)
+    console.print(f"  {len(current_members)} current members")
+
+    console.print(f"Fetching pinned revision {CHANGES_TABLE_FALLBACK_REVID} for change history...")
+    old_html = _fetch_wikipedia_revision_html(CHANGES_TABLE_FALLBACK_REVID)
+    changes = parse_changes(old_html)
+    console.print(f"  {len(changes)} historical changes")
+
+    from vibe_trade.backtest.membership import recent_additions_since
+
+    cutoff = _date(2026, 8, 8)  # keep in sync with CHANGES_TABLE_FALLBACK_REVID's date
+    gap_fill = recent_additions_since(added_dates, since=cutoff)
+    if gap_fill:
+        console.print(
+            f"  [yellow]{len(gap_fill)} addition(s) since the pinned revision, "
+            f"recovered from \"Date added\": {[c.added for c in gap_fill]}[/yellow]"
+        )
+    all_changes = changes + gap_fill
+
+    today = _date.today().isoformat()
+    source = generate_artifact_source(current_members, all_changes, last_updated=today)
+    out_path = Path("src/vibe_trade/data/sp500_membership.py")
+    out_path.write_text(source)
+
+    console.print(f"  [green]wrote {out_path}[/green]")
+    console.print(f"  LAST_UPDATED = {today}, {len(current_members)} members, {len(all_changes)} changes")
+    console.print(
+        "\n[dim]Commit src/vibe_trade/data/sp500_membership.py to lock in the refresh. "
+        "Removals since the pinned revision are NOT recoverable from Wikipedia alone -- "
+        "a small, known, documented gap.[/dim]"
+    )
+
+
 @app.command()
 def backtest(
     start: str = typer.Option(..., "--start", help="Start date YYYY-MM-DD"),
